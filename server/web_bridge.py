@@ -10,6 +10,7 @@ import logging
 import secrets
 import sys
 import time
+from os import getenv
 from pathlib import Path
 from typing import Dict, Set
 
@@ -21,7 +22,7 @@ from pydantic import BaseModel, EmailStr
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from client.chat_client_logic import ChatLogic
-from server.email_service import EmailService
+from server.email_service import EmailDeliveryError, EmailService, SMTPSettings
 from server.user_store import UserStore
 
 logging.basicConfig(level=logging.INFO)
@@ -49,7 +50,28 @@ SERVER_PORT = 4433
 CACERT = "cert.pem"
 
 user_store = UserStore("users.json")
-email_service = EmailService()
+
+
+def _build_email_service() -> EmailService:
+    env_mode = getenv("ENV", "development")
+    raw_port = getenv("EMAIL_PORT")
+    port = None
+    if raw_port:
+        try:
+            port = int(raw_port)
+        except ValueError as exc:  # noqa: TRY003
+            raise RuntimeError("EMAIL_PORT deve ser um inteiro válido") from exc
+    settings = SMTPSettings(
+        host=getenv("EMAIL_HOST"),
+        port=port,
+        username=getenv("EMAIL_USER"),
+        password=getenv("EMAIL_PASSWORD"),
+        sender=getenv("EMAIL_FROM"),
+    )
+    return EmailService(settings=settings, env_mode=env_mode)
+
+
+email_service = _build_email_service()
 MFA_TOKEN_TTL = 300  # 5 minutos
 
 
@@ -173,7 +195,15 @@ async def login(request: LoginRequest):
         "email": user["email"],
         "expires_at": time.time() + MFA_TOKEN_TTL,
     }
-    email_service.send_mfa_code(user["email"], code)
+    try:
+        email_service.send_mfa_code(user["email"], code)
+    except EmailDeliveryError as exc:
+        pending_mfa.pop(token, None)
+        log.error("Falha ao enviar código MFA para %s: %s", user["email"], exc)
+        raise HTTPException(
+            status_code=500,
+            detail="Falha ao enviar código MFA por e-mail",
+        ) from exc
     log.info("Código MFA gerado para %s", user["email"])
     return JSONResponse(
         {
