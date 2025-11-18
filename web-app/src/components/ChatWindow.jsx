@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 
+const DRAWER_ID = 'conversation-drawer'
+
 function ChatWindow({ conversation, clientId, onSendMessage, onOpenSidebar }) {
   const [message, setMessage] = useState('')
   const messagesEndRef = useRef(null)
@@ -31,9 +33,9 @@ function ChatWindow({ conversation, clientId, onSendMessage, onOpenSidebar }) {
   }
 
   return (
-    <div className="flex flex-1 flex-col h-full bg-gray-900 overflow-hidden">
+    <div className="flex flex-1 w-full min-h-0 flex-col bg-gray-900 overflow-hidden">
       {/* Header */}
-      <div className="px-4 sm:px-6 py-4 border-b border-gray-800 bg-gray-900/80 backdrop-blur-xl flex items-center justify-between">
+      <div className="px-4 sm:px-6 py-4 border-b border-gray-800 bg-gray-900/80 backdrop-blur-xl flex items-center justify-between w-full">
         <div className="flex items-center space-x-3">
           <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg ${
             conversation.type === 'group'
@@ -51,6 +53,8 @@ function ChatWindow({ conversation, clientId, onSendMessage, onOpenSidebar }) {
         </div>
         <button
           onClick={onOpenSidebar}
+          aria-controls={DRAWER_ID}
+          aria-label="Abrir lista de conversas"
           className="lg:hidden px-3 py-2 text-xs font-semibold text-gray-200 bg-gray-800 border border-gray-700 rounded-lg"
         >
           Conversas
@@ -58,7 +62,7 @@ function ChatWindow({ conversation, clientId, onSendMessage, onOpenSidebar }) {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-6 bg-gray-900">
+      <div className="flex-1 w-full overflow-y-auto px-4 py-6 bg-gray-900">
         {conversation.history.length === 0 ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">

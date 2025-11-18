@@ -13,8 +13,10 @@ function ChatInterface({ clientId, sessionToken, onLogout }) {
   const [showCreateGroup, setShowCreateGroup] = useState(false)
   const [syncError, setSyncError] = useState('')
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+  const [isDesktop, setIsDesktop] = useState(false)
   const isInitialLoadRef = useRef(true)
   const wsRef = useRef(null)
+  const drawerId = 'conversation-drawer'
 
   const buildAuthHeaders = (extra = {}) => {
     const headers = { ...extra }
@@ -23,6 +25,15 @@ function ChatInterface({ clientId, sessionToken, onLogout }) {
     }
     return headers
   }
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const media = window.matchMedia('(min-width: 1024px)')
+    const updateMatches = () => setIsDesktop(media.matches)
+    updateMatches()
+    media.addEventListener('change', updateMatches)
+    return () => media.removeEventListener('change', updateMatches)
+  }, [])
 
   useEffect(() => {
     // Resetar estado quando clientId mudar
@@ -203,6 +214,7 @@ function ChatInterface({ clientId, sessionToken, onLogout }) {
 
   const handleOpenSidebar = () => setIsSidebarOpen(true)
   const handleCloseSidebar = () => setIsSidebarOpen(false)
+  const drawerVisible = isDesktop || isSidebarOpen
 
   if (loading) {
     return (
@@ -233,6 +245,7 @@ function ChatInterface({ clientId, sessionToken, onLogout }) {
         <div className="flex items-center space-x-2">
           <button
             onClick={handleOpenSidebar}
+            aria-controls={drawerId}
             className="px-3 py-2 rounded-lg bg-gray-800 text-gray-200 text-xs font-medium border border-gray-700"
           >
             Conversas
@@ -249,18 +262,22 @@ function ChatInterface({ clientId, sessionToken, onLogout }) {
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
+      <div className="flex-1 flex w-full min-h-0 flex-col lg:flex-row overflow-hidden relative">
         {/* Sidebar */}
-        {isSidebarOpen && (
+        {!isDesktop && isSidebarOpen && (
           <button
             aria-label="Fechar lista de conversas"
             className="fixed inset-0 bg-black/60 z-20 lg:hidden"
             onClick={handleCloseSidebar}
           ></button>
         )}
-        <div
-          className={`fixed inset-y-0 left-0 z-30 w-full max-w-xs bg-gray-800 border-r border-gray-700 flex flex-col shadow-2xl transform transition-transform duration-300 lg:static lg:translate-x-0 lg:max-w-none lg:w-80 lg:shadow-lg ${
-            isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
+        <aside
+          id={drawerId}
+          role={isDesktop ? 'complementary' : 'dialog'}
+          aria-modal={isDesktop ? undefined : true}
+          aria-hidden={isDesktop ? undefined : !isSidebarOpen}
+          className={`fixed inset-y-0 left-0 z-30 flex h-full min-h-0 w-full max-w-xs flex-col bg-gray-800 border-r border-gray-700 shadow-2xl transition-transform duration-300 ease-out lg:relative lg:w-80 lg:max-w-xs lg:transform-none lg:shadow-lg ${
+            drawerVisible ? 'translate-x-0' : '-translate-x-full'
           }`}
         >
           <div className="hidden lg:block p-4 border-b border-gray-700 bg-gray-800/80 backdrop-blur-xl">
@@ -295,10 +312,10 @@ function ChatInterface({ clientId, sessionToken, onLogout }) {
             onSelect={handleSelectConversation}
             onCreateGroup={() => setShowCreateGroup(true)}
           />
-        </div>
+        </aside>
 
         {/* Main Chat Area */}
-        <div className="flex-1 flex flex-col bg-gray-900 min-h-0">
+        <div className="flex-1 flex w-full min-h-0 flex-col bg-gray-900">
           {syncError && (
             <div className="px-6 py-3 bg-red-900/40 text-red-200 text-sm text-center border-b border-red-700/40">
               {syncError}
@@ -323,6 +340,7 @@ function ChatInterface({ clientId, sessionToken, onLogout }) {
                 <p className="text-gray-500 text-sm">Escolha uma conversa da lista para começar</p>
                 <button
                   onClick={handleOpenSidebar}
+                  aria-controls={drawerId}
                   className="mt-4 inline-flex items-center justify-center px-4 py-2 rounded-xl bg-gray-800 text-sm font-semibold text-gray-200 border border-gray-700 lg:hidden"
                 >
                   Ver conversas
@@ -332,6 +350,20 @@ function ChatInterface({ clientId, sessionToken, onLogout }) {
           )}
         </div>
       </div>
+
+      <button
+        type="button"
+        onClick={handleOpenSidebar}
+        aria-controls={drawerId}
+        className={`lg:hidden fixed bottom-5 right-5 z-30 inline-flex items-center space-x-2 rounded-full bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-600/30 transition-all duration-200 ${
+          isSidebarOpen ? 'pointer-events-none opacity-0 translate-y-2' : 'opacity-100 translate-y-0'
+        }`}
+      >
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h10M4 18h7" />
+        </svg>
+        <span>Conversas</span>
+      </button>
 
       {showCreateGroup && (
         <CreateGroupModal
