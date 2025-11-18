@@ -16,7 +16,14 @@ Sistema de chat seguro com criptografia end-to-end usando ECDH (X25519) + Salsa2
 uv sync
 ```
 
-### 2. Gerar Certificados TLS
+### 2. Registrar Usuários com MFA
+
+1. Inicie o servidor bridge (passo 5 abaixo)
+2. Acesse `http://localhost:3000`
+3. Escolha **Registrar** e informe e-mail corporativo, senha forte e ID público do chat
+4. Faça login e valide o código MFA enviado (em desenvolvimento, consulte `mfa_emails.log`)
+
+### 3. Gerar Certificados TLS
 
 ```bash
 python server/generate_cert.py
@@ -24,7 +31,7 @@ python server/generate_cert.py
 
 Isso criará `cert.pem` e `key.pem` na raiz do projeto.
 
-### 3. Iniciar o Servidor TLS Principal
+### 4. Iniciar o Servidor TLS Principal
 
 ```bash
 python server/server.py cert.pem key.pem
@@ -32,7 +39,7 @@ python server/server.py cert.pem key.pem
 
 O servidor estará rodando na porta **4433**.
 
-### 4. Iniciar o Servidor Bridge (HTTP/WebSocket)
+### 5. Iniciar o Servidor Bridge (HTTP/WebSocket)
 
 Em um novo terminal:
 
@@ -42,7 +49,7 @@ python server/web_bridge.py
 
 O servidor bridge estará rodando na porta **8000**.
 
-### 5. Iniciar a Interface Web React
+### 6. Iniciar a Interface Web React
 
 Em um novo terminal:
 
@@ -57,10 +64,10 @@ A interface web estará disponível em `http://localhost:3000`.
 ## 🎯 Como Usar
 
 1. **Acesse a interface web** em `http://localhost:3000`
-2. **Digite seu ID** (ex: "alice", "bob") e clique em "Entrar / Registrar"
-3. **Aguarde outros usuários** se conectarem ou crie um grupo
-4. **Selecione uma conversa** da lista lateral
-5. **Envie mensagens** que serão criptografadas automaticamente
+2. **Registre-se** com e-mail corporativo, senha forte e ID público do chat (ex: `alice`)
+3. **Faça login** usando o e-mail/senha e valide o código MFA enviado
+4. **Selecione uma conversa** da lista lateral ou crie um grupo
+5. **Envie mensagens** criptografadas end-to-end
 
 ### Criar um Grupo
 

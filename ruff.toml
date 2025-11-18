@@ -1,0 +1,16 @@
+line-length = 100
+target-version = "py312"
+
+[lint]
+select = ["ALL"]
+extend-select = [
+    "E", "W", "C90", "I", "N", "D", "UP", "YTT", "ASYNC", "S", "BLE", "FBT",
+    "B", "A", "C4", "DTZ", "T10", "DJ", "EM", "EXE", "FA", "ISC", "ICN",
+    "LOG", "G", "INP", "PIE", "PYI", "PT", "Q", "RSE", "RET", "SLF", "SLOT",
+    "SIM", "TID", "TC", "INT", "ARG", "PTH", "TD", "FIX", "PD", "PGH", "PL",
+    "TRY", "FLY", "NPY", "FAST", "AIR", "PERF", "FURB", "RUF",
+]
+ignore = [
+    "D205", "D413", "E501", "D1", "FBT003", "D203", "D212", "D401", "S311",
+    "PERF401", "RET504", "FA102", "TRY003", "EM101",
+]
