@@ -2,42 +2,253 @@ import React, { useState } from 'react'
 import { API_BASE_URL } from '../config'
 
 function Login({ onLogin }) {
-  const [clientId, setClientId] = useState('')
+  const [mode, setMode] = useState('login')
+  const [step, setStep] = useState('auth')
+  const [form, setForm] = useState({
+    email: '',
+    password: '',
+    confirmPassword: '',
+    clientId: '',
+  })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [statusMessage, setStatusMessage] = useState('')
+  const [mfaToken, setMfaToken] = useState('')
+  const [mfaCode, setMfaCode] = useState('')
 
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-    if (!clientId.trim()) {
-      setError('Por favor, insira um ID')
-      return
-    }
-
-    setLoading(true)
+  const resetFeedback = () => {
     setError('')
+    setStatusMessage('')
+  }
 
+  const handleChange = (field) => (event) => {
+    setForm((prev) => ({ ...prev, [field]: event.target.value }))
+  }
+
+  const handleRegister = async (event) => {
+    event.preventDefault()
+    resetFeedback()
+    setLoading(true)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/register`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: form.email.trim(),
+          password: form.password,
+          confirm_password: form.confirmPassword,
+          client_id: form.clientId.trim(),
+        }),
+      })
+      const data = await response.json()
+      if (data.status === 'ok') {
+        setStatusMessage('Registro concluído! Faça login para continuar.')
+        setMode('login')
+        setForm((prev) => ({ ...prev, password: '', confirmPassword: '' }))
+      } else {
+        setError(data.detail || 'Erro ao registrar usuário')
+      }
+    } catch (err) {
+      console.error(err)
+      setError('Erro de conexão. Verifique o servidor.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleLoginSubmit = async (event) => {
+    event.preventDefault()
+    resetFeedback()
+    setLoading(true)
     try {
       const response = await fetch(`${API_BASE_URL}/api/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ client_id: clientId.trim() }),
+        body: JSON.stringify({
+          email: form.email.trim(),
+          password: form.password,
+        }),
       })
-
       const data = await response.json()
-
-      if (data.status === 'ok') {
-        onLogin(clientId.trim())
+      if (data.status === 'mfa_required') {
+        setStep('mfa')
+        setMfaToken(data.token)
+        setStatusMessage('Enviamos um código para o seu e-mail. Confira e insira abaixo.')
+      } else if (data.status === 'ok') {
+        onLogin(data.client_id)
       } else {
-        setError(data.detail || 'Erro ao fazer login')
+        setError(data.detail || 'Erro ao realizar login')
       }
     } catch (err) {
-      setError('Erro de conexão. Verifique se o servidor está rodando.')
-      console.error('Erro no login:', err)
+      console.error(err)
+      setError('Erro de conexão. Verifique o servidor.')
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleVerifyMfa = async (event) => {
+    event.preventDefault()
+    if (!mfaToken) {
+      setError('Token MFA ausente. Refaça o login.')
+      return
+    }
+    resetFeedback()
+    setLoading(true)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/verify-mfa`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          token: mfaToken,
+          code: mfaCode.trim(),
+        }),
+      })
+      const data = await response.json()
+      if (data.status === 'ok') {
+        onLogin(data.client_id)
+      } else {
+        setError(data.detail || 'Código inválido')
+      }
+    } catch (err) {
+      console.error(err)
+      setError('Erro de conexão ao validar MFA')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const renderForm = () => {
+    if (step === 'mfa') {
+      return (
+        <form onSubmit={handleVerifyMfa} className="space-y-5">
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Código MFA
+            </label>
+            <input
+              type="text"
+              value={mfaCode}
+              onChange={(e) => setMfaCode(e.target.value)}
+              placeholder="Digite o código enviado"
+              className="w-full px-4 py-3 bg-gray-700/50 border border-gray-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white placeholder-gray-400"
+            />
+          </div>
+          <div className="flex space-x-3">
+            <button
+              type="button"
+              onClick={() => {
+                setStep('auth')
+                setMfaCode('')
+                setMfaToken('')
+              }}
+              className="flex-1 py-3 bg-gray-700 text-gray-200 rounded-xl hover:bg-gray-600 transition-all"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={loading || !mfaCode.trim()}
+              className="flex-1 py-3 bg-gradient-to-r from-blue-500 to-blue-600 text-white font-medium rounded-xl shadow-lg hover:shadow-xl hover:shadow-blue-500/50 transform hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 disabled:opacity-50"
+            >
+              Validar código
+            </button>
+          </div>
+        </form>
+      )
+    }
+
+    if (mode === 'register') {
+      return (
+        <form onSubmit={handleRegister} className="space-y-5">
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">E-mail corporativo</label>
+            <input
+              type="email"
+              value={form.email}
+              onChange={handleChange('email')}
+              placeholder="seu.email@empresa.com"
+              className="w-full px-4 py-3 bg-gray-700/50 border border-gray-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white placeholder-gray-400"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">ID público no chat</label>
+            <input
+              type="text"
+              value={form.clientId}
+              onChange={handleChange('clientId')}
+              placeholder="ex: alice, squad-crypto"
+              className="w-full px-4 py-3 bg-gray-700/50 border border-gray-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white placeholder-gray-400"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">Senha</label>
+            <input
+              type="password"
+              value={form.password}
+              onChange={handleChange('password')}
+              placeholder="Mínimo 8 caracteres"
+              className="w-full px-4 py-3 bg-gray-700/50 border border-gray-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white placeholder-gray-400"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">Confirmar senha</label>
+            <input
+              type="password"
+              value={form.confirmPassword}
+              onChange={handleChange('confirmPassword')}
+              placeholder="Repita a senha"
+              className="w-full px-4 py-3 bg-gray-700/50 border border-gray-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white placeholder-gray-400"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full py-3 bg-gradient-to-r from-blue-500 to-blue-600 text-white font-medium rounded-xl shadow-lg hover:shadow-xl hover:shadow-blue-500/50 transform hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 disabled:opacity-50"
+          >
+            Criar conta segura
+          </button>
+        </form>
+      )
+    }
+
+    return (
+      <form onSubmit={handleLoginSubmit} className="space-y-5">
+        <div>
+          <label className="block text-sm font-medium text-gray-300 mb-2">E-mail</label>
+          <input
+            type="email"
+            value={form.email}
+            onChange={handleChange('email')}
+            placeholder="seu.email@empresa.com"
+            className="w-full px-4 py-3 bg-gray-700/50 border border-gray-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white placeholder-gray-400"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-300 mb-2">Senha</label>
+          <input
+            type="password"
+            value={form.password}
+            onChange={handleChange('password')}
+            placeholder="••••••••"
+            className="w-full px-4 py-3 bg-gray-700/50 border border-gray-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white placeholder-gray-400"
+          />
+        </div>
+        <button
+          type="submit"
+          disabled={loading}
+          className="w-full py-3 bg-gradient-to-r from-blue-500 to-blue-600 text-white font-medium rounded-xl shadow-lg hover:shadow-xl hover:shadow-blue-500/50 transform hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 disabled:opacity-50"
+        >
+          Entrar com MFA
+        </button>
+      </form>
+    )
   }
 
   return (
@@ -51,53 +262,49 @@ function Login({ onLogin }) {
               </svg>
             </div>
             <h1 className="text-3xl font-semibold text-white mb-2">Chat Seguro</h1>
-            <p className="text-sm text-gray-400">Criptografia end-to-end com ECDH + Salsa20+Poly1305</p>
+            <p className="text-sm text-gray-400">Autenticação forte com senha + MFA</p>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <div>
-              <label htmlFor="clientId" className="block text-sm font-medium text-gray-300 mb-2">
-                Seu ID de Usuário
-              </label>
-              <input
-                id="clientId"
-                type="text"
-                value={clientId}
-                onChange={(e) => setClientId(e.target.value)}
-                placeholder="Digite seu ID"
-                disabled={loading}
-                autoFocus
-                className="w-full px-4 py-3 bg-gray-700/50 border border-gray-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white placeholder-gray-400 disabled:opacity-50"
-              />
+          {step === 'auth' && (
+            <div className="flex mb-6 rounded-2xl overflow-hidden border border-gray-700">
+              {['login', 'register'].map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => {
+                    resetFeedback()
+                    setMode(tab)
+                  }}
+                  className={`flex-1 py-2 text-sm font-medium transition-all ${
+                    mode === tab
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-transparent text-gray-400 hover:text-white'
+                  }`}
+                  type="button"
+                >
+                  {tab === 'login' ? 'Entrar' : 'Registrar'}
+                </button>
+              ))}
             </div>
+          )}
 
-            {error && (
-              <div className="bg-red-900/50 border border-red-700 text-red-200 px-4 py-3 rounded-xl text-sm animate-slide-up">
-                {error}
-              </div>
-            )}
+          {statusMessage && (
+            <div className="bg-green-900/40 border border-green-700 text-green-200 px-4 py-3 rounded-xl text-sm mb-4">
+              {statusMessage}
+            </div>
+          )}
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-3 bg-gradient-to-r from-blue-500 to-blue-600 text-white font-medium rounded-xl shadow-lg hover:shadow-xl hover:shadow-blue-500/50 transform hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
-            >
-              {loading ? (
-                <span className="flex items-center justify-center">
-                  <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  Conectando...
-                </span>
-              ) : (
-                'Entrar / Registrar'
-              )}
-            </button>
-          </form>
+          {error && (
+            <div className="bg-red-900/50 border border-red-700 text-red-200 px-4 py-3 rounded-xl text-sm mb-4">
+              {error}
+            </div>
+          )}
 
-          <div className="mt-6 text-center">
-            <p className="text-xs text-gray-500">Seu ID será usado para identificar você no sistema</p>
+          {renderForm()}
+
+          <div className="mt-6 text-center text-xs text-gray-500">
+            {step === 'mfa'
+              ? 'Dica: acompanhe o arquivo mfa_emails.log para ver os códigos no ambiente local.'
+              : 'As credenciais protegem seu ID público e suas chaves criptográficas.'}
           </div>
         </div>
       </div>

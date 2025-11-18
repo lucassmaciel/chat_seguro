@@ -11,6 +11,7 @@ function ChatInterface({ clientId, onLogout }) {
   const [selectedConversation, setSelectedConversation] = useState(null)
   const [loading, setLoading] = useState(true)
   const [showCreateGroup, setShowCreateGroup] = useState(false)
+  const [syncError, setSyncError] = useState('')
   const isInitialLoadRef = useRef(true)
   const wsRef = useRef(null)
 
@@ -19,39 +20,49 @@ function ChatInterface({ clientId, onLogout }) {
     isInitialLoadRef.current = true
     setSelectedConversation(null)
     setLoading(true)
-    
+    setSyncError('')
+
+    let reconnect = true
+    let reconnectTimeout
+
+    const connectWebSocket = () => {
+      const ws = new WebSocket(`${WS_BASE_URL}/ws/${clientId}`)
+      wsRef.current = ws
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data)
+        if (['new_message', 'update_ui', 'message_sent'].includes(data.type)) {
+          loadConversations()
+        }
+      }
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error)
+      }
+
+      ws.onclose = () => {
+        if (reconnect) {
+          reconnectTimeout = setTimeout(connectWebSocket, 3000)
+        }
+      }
+    }
+
+    const interval = setInterval(loadConversations, 3000)
     loadConversations()
     connectWebSocket()
 
-    const interval = setInterval(loadConversations, 1000) // Atualizar mais frequentemente
-
     return () => {
+      reconnect = false
       clearInterval(interval)
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout)
+      }
       if (wsRef.current) {
         wsRef.current.close()
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId])
-
-  const connectWebSocket = () => {
-    const ws = new WebSocket(`${WS_BASE_URL}/ws/${clientId}`)
-    wsRef.current = ws
-
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data)
-      if (data.type === 'new_message' || data.type === 'update_ui' || data.type === 'message_sent') {
-        loadConversations()
-      }
-    }
-
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error)
-    }
-
-    ws.onclose = () => {
-      setTimeout(connectWebSocket, 3000)
-    }
-  }
 
   const loadConversations = async () => {
     try {
@@ -60,7 +71,14 @@ function ChatInterface({ clientId, onLogout }) {
       )
       const data = await response.json()
 
+      if (response.status === 401) {
+        setSyncError('Sessão expirada. Faça login novamente para continuar.')
+        onLogout()
+        return
+      }
+
       if (data.status === 'ok') {
+        setSyncError('')
         const newConversations = data.conversations || []
         setConversations(newConversations)
         setAvailableClients(data.available_clients || [])
@@ -82,9 +100,12 @@ function ChatInterface({ clientId, onLogout }) {
           // Se a conversa selecionada não existe mais, manter null (usuário escolhe manualmente)
           return prevSelected
         })
+      } else if (data.detail) {
+        setSyncError(data.detail)
       }
     } catch (error) {
       console.error('Erro ao carregar conversas:', error)
+      setSyncError('Erro ao sincronizar dados. Verifique sua conexão.')
     } finally {
       setLoading(false)
     }
@@ -212,6 +233,11 @@ function ChatInterface({ clientId, onLogout }) {
 
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col bg-gray-900">
+        {syncError && (
+          <div className="px-6 py-3 bg-red-900/40 text-red-200 text-sm text-center border-b border-red-700/40">
+            {syncError}
+          </div>
+        )}
         {currentConversation ? (
           <ChatWindow
             conversation={currentConversation}

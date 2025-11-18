@@ -7,18 +7,22 @@ Suporta múltiplos clientes simultâneos
 import asyncio
 import json
 import logging
+import secrets
 import sys
+import time
 from pathlib import Path
 from typing import Dict, Set
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from client.chat_client_logic import ChatLogic
+from server.email_service import EmailService
+from server.user_store import UserStore
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("web_bridge")
@@ -37,15 +41,33 @@ app.add_middleware(
 # Armazenamento de sessões ativas (suporta múltiplos clientes)
 active_sessions: Dict[str, ChatLogic] = {}
 websocket_connections: Dict[str, Set[WebSocket]] = {}
+pending_mfa: Dict[str, dict] = {}
 
 # Configuração do servidor TLS
 SERVER_HOST = "localhost"
 SERVER_PORT = 4433
 CACERT = "cert.pem"
 
+user_store = UserStore("users.json")
+email_service = EmailService()
+MFA_TOKEN_TTL = 300  # 5 minutos
+
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str
+    confirm_password: str
+    client_id: str
+
 
 class LoginRequest(BaseModel):
-    client_id: str
+    email: EmailStr
+    password: str
+
+
+class MFAVerifyRequest(BaseModel):
+    token: str
+    code: str
 
 
 class SendMessageRequest(BaseModel):
@@ -84,69 +106,101 @@ async def get_status():
     )
 
 
+async def _establish_session(client_id: str) -> dict:
+    """Cria uma sessão segura com o servidor TLS se necessário."""
+
+    if client_id in active_sessions:
+        return {"client_id": client_id, "session_active": True}
+
+    logic = ChatLogic(SERVER_HOST, SERVER_PORT, CACERT, client_id)
+
+    def on_new_message(peer, message):
+        notify_websockets(client_id, "new_message", {"peer": peer, "message": message})
+
+    def on_update_ui():
+        notify_websockets(client_id, "update_ui", {})
+
+    logic.on_new_message = on_new_message
+    logic.on_update_ui = on_update_ui
+
+    success = await logic.publish_key()
+    if not success:
+        raise HTTPException(status_code=500, detail="Falha ao publicar chave")
+
+    active_sessions[client_id] = logic
+    websocket_connections[client_id] = set()
+    asyncio.create_task(poll_messages(client_id))
+    await logic.list_all()
+    log.info(
+        "Cliente %s conectado. Sessões ativas: %d",
+        client_id,
+        len(active_sessions),
+    )
+    return {"client_id": client_id, "session_active": False}
+
+
+@app.post("/api/register")
+async def register_user(request: RegisterRequest):
+    password = request.password.strip()
+    if password != request.confirm_password.strip():
+        raise HTTPException(status_code=400, detail="As senhas não conferem")
+    if len(password) < 8:
+        raise HTTPException(
+            status_code=400, detail="A senha deve ter pelo menos 8 caracteres"
+        )
+    if not request.client_id.strip():
+        raise HTTPException(status_code=400, detail="client_id é obrigatório")
+    try:
+        user_store.create_user(request.email, password, request.client_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    log.info("Novo usuário registrado: %s", request.email)
+    return JSONResponse({"status": "ok", "message": "Usuário registrado"})
+
+
 @app.post("/api/login")
 async def login(request: LoginRequest):
-    """Login e publicação de chave - suporta múltiplos clientes simultâneos"""
-    client_id = request.client_id.strip()
-    if not client_id:
-        raise HTTPException(status_code=400, detail="client_id é obrigatório")
+    user = user_store.verify_user(request.email, request.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Credenciais inválidas")
 
-    # Permitir reconexão se a sessão existir (útil para múltiplas abas)
-    if client_id in active_sessions:
-        log.info(f"Cliente {client_id} já possui sessão ativa. Reutilizando...")
-        return JSONResponse(
-            {
-                "status": "ok",
-                "message": "Já conectado",
-                "client_id": client_id,
-                "session_active": True,
-            }
-        )
+    token = secrets.token_urlsafe(32)
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    pending_mfa[token] = {
+        "code": code,
+        "client_id": user["client_id"],
+        "email": user["email"],
+        "expires_at": time.time() + MFA_TOKEN_TTL,
+    }
+    email_service.send_mfa_code(user["email"], code)
+    log.info("Código MFA gerado para %s", user["email"])
+    return JSONResponse(
+        {
+            "status": "mfa_required",
+            "message": "Código MFA enviado por e-mail",
+            "token": token,
+            "expires_in": MFA_TOKEN_TTL,
+        }
+    )
 
-    try:
-        logic = ChatLogic(SERVER_HOST, SERVER_PORT, CACERT, client_id)
 
-        # Callbacks para notificar via WebSocket
-        def on_new_message(peer, message):
-            notify_websockets(
-                client_id, "new_message", {"peer": peer, "message": message}
-            )
+@app.post("/api/verify-mfa")
+async def verify_mfa(request: MFAVerifyRequest):
+    info = pending_mfa.get(request.token)
+    if not info:
+        raise HTTPException(status_code=400, detail="Token inválido")
 
-        def on_update_ui():
-            notify_websockets(client_id, "update_ui", {})
+    if info["expires_at"] < time.time():
+        pending_mfa.pop(request.token, None)
+        raise HTTPException(status_code=400, detail="Token expirado")
 
-        logic.on_new_message = on_new_message
-        logic.on_update_ui = on_update_ui
+    if info["code"] != request.code:
+        raise HTTPException(status_code=400, detail="Código MFA inválido")
 
-        # Publicar chave
-        success = await logic.publish_key()
-        if not success:
-            raise HTTPException(status_code=500, detail="Falha ao publicar chave")
-
-        active_sessions[client_id] = logic
-        websocket_connections[client_id] = set()
-
-        # Iniciar polling em background
-        asyncio.create_task(poll_messages(client_id))
-
-        # Carregar conversas iniciais
-        await logic.list_all()
-
-        log.info(
-            f"Cliente {client_id} conectado com sucesso. Total de sessões ativas: {len(active_sessions)}"
-        )
-
-        return JSONResponse(
-            {
-                "status": "ok",
-                "message": "Login realizado com sucesso",
-                "client_id": client_id,
-                "session_active": False,
-            }
-        )
-    except Exception as e:
-        log.error(f"Erro no login: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    pending_mfa.pop(request.token, None)
+    session_info = await _establish_session(info["client_id"])
+    return JSONResponse({"status": "ok", **session_info})
 
 
 @app.post("/api/logout")
@@ -179,38 +233,7 @@ async def logout(client_id: str):
 async def get_conversations(client_id: str):
     """Lista todas as conversas (clientes e grupos)"""
     if client_id not in active_sessions:
-        # Tentar fazer login automático se a sessão não existir
-        log.warning(f"Cliente {client_id} não autenticado. Tentando reconectar...")
-        try:
-            logic = ChatLogic(SERVER_HOST, SERVER_PORT, CACERT, client_id)
-
-            def on_new_message(peer, message):
-                notify_websockets(
-                    client_id, "new_message", {"peer": peer, "message": message}
-                )
-
-            def on_update_ui():
-                notify_websockets(client_id, "update_ui", {})
-
-            logic.on_new_message = on_new_message
-            logic.on_update_ui = on_update_ui
-
-            success = await logic.publish_key()
-            if success:
-                active_sessions[client_id] = logic
-                websocket_connections[client_id] = set()
-                asyncio.create_task(poll_messages(client_id))
-                await logic.list_all()
-                log.info(f"Reconexão automática bem-sucedida para {client_id}")
-            else:
-                raise HTTPException(
-                    status_code=401, detail="Falha na reconexão automática"
-                )
-        except Exception as e:
-            log.error(f"Erro na reconexão automática para {client_id}: {e}")
-            raise HTTPException(
-                status_code=401, detail="Não autenticado. Faça login primeiro."
-            )
+        raise HTTPException(status_code=401, detail="Não autenticado")
 
     logic = active_sessions[client_id]
 
