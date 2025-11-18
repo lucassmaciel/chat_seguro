@@ -49,6 +49,29 @@ python server/web_bridge.py
 
 O servidor bridge estará rodando na porta **8000**.
 
+### Configurar domínios autorizados (CORS)
+
+O `server/web_bridge.py` valida todas as origens (HTTP e WebSocket) usando a configuração `ALLOWED_ORIGINS`.
+
+- **Desenvolvimento**: `http://localhost:3000` é permitido automaticamente.
+- **Produção**: defina `ENV=production` e informe explicitamente os domínios front-end usando:
+  - Variável de ambiente `ALLOWED_ORIGINS` com valores separados por vírgula, por exemplo:
+
+    ```bash
+    ENV=production ALLOWED_ORIGINS="https://app.exemplo.com,https://chat.exemplo.com" python server/web_bridge.py
+    ```
+
+  - Ou um arquivo `allowed_origins.json` na raiz contendo uma lista JSON, por exemplo:
+
+    ```json
+    [
+      "https://app.exemplo.com",
+      "https://chat.exemplo.com"
+    ]
+    ```
+
+Use a variável `ALLOWED_ORIGINS_FILE` caso queira apontar para outro caminho de arquivo. Qualquer origem não listada será rejeitada pelo servidor bridge.
+
 ### 6. Iniciar a Interface Web React
 
 Em um novo terminal:
