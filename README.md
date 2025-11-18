@@ -49,6 +49,20 @@ python server/web_bridge.py
 
 O servidor bridge estará rodando na porta **8000**.
 
+#### Variáveis de e-mail obrigatórias
+
+O envio de códigos MFA utiliza SMTP autenticado com STARTTLS configurado por variáveis de ambiente:
+
+| Variável         | Descrição                                               |
+| ---------------- | ------------------------------------------------------- |
+| `EMAIL_HOST`     | Hostname ou IP do servidor SMTP                         |
+| `EMAIL_PORT`     | Porta TCP do servidor SMTP (ex.: `587`)                 |
+| `EMAIL_USER`     | Usuário da conta de e-mail utilizada no envio           |
+| `EMAIL_PASSWORD` | Senha ou token de app do usuário configurado            |
+| `EMAIL_FROM`     | Endereço completo exibido como remetente do código MFA  |
+
+Em `ENV=development`, a aplicação não envia mensagens reais: o código MFA é registrado no log (`mfa_emails.log`). Nos demais ambientes, todas as variáveis acima precisam estar definidas, caso contrário o servidor não iniciará.
+
 ### Configurar domínios autorizados (CORS)
 
 O `server/web_bridge.py` valida todas as origens (HTTP e WebSocket) usando a configuração `ALLOWED_ORIGINS`.

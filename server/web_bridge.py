@@ -21,7 +21,12 @@ from pydantic import BaseModel, EmailStr
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from client.chat_client_logic import ChatLogic
-from server.email_service import EmailDeliveryError, EmailService, SMTPSettings
+from server.email_service import (
+    EmailDeliveryError,
+    EmailService,
+    EmailServiceError,
+    SMTPSettings,
+)
 from server.user_store import UserStore
 
 logging.basicConfig(level=logging.INFO)
@@ -304,7 +309,7 @@ async def login(request: LoginRequest):
     }
     try:
         email_service.send_mfa_code(user["email"], code)
-    except EmailDeliveryError as exc:
+    except (EmailDeliveryError, EmailServiceError) as exc:
         pending_mfa.pop(token, None)
         log.error("Falha ao enviar código MFA para %s: %s", user["email"], exc)
         raise HTTPException(
