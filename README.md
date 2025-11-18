@@ -20,8 +20,8 @@ uv sync
 
 1. Inicie o servidor bridge (passo 5 abaixo)
 2. Acesse `http://localhost:3000`
-3. Escolha **Registrar** e informe e-mail corporativo, senha forte e ID público do chat
-4. Faça login e valide o código MFA enviado (em desenvolvimento, consulte `mfa_emails.log`)
+3. Escolha **Registrar** e informe e-mail, senha forte e ID público do chat
+4. Faça login e valide o código MFA enviado diretamente ao e-mail cadastrado
 
 ### 3. Gerar Certificados TLS
 
@@ -64,7 +64,7 @@ A interface web estará disponível em `http://localhost:3000`.
 ## 🎯 Como Usar
 
 1. **Acesse a interface web** em `http://localhost:3000`
-2. **Registre-se** com e-mail corporativo, senha forte e ID público do chat (ex: `alice`)
+2. **Registre-se** com e-mail, senha forte e ID público do chat (ex: `alice`)
 3. **Faça login** usando o e-mail/senha e valide o código MFA enviado
 4. **Selecione uma conversa** da lista lateral ou crie um grupo
 5. **Envie mensagens** criptografadas end-to-end
@@ -122,6 +122,13 @@ Chat-Seguran-a/
 - Verifique se o WebSocket está conectado (console do navegador)
 - Verifique os logs do servidor
 - Tente recarregar a página
+
+### Código MFA não recebido
+
+- Aguarde até 1 minuto e confira a caixa de entrada e o lixo eletrônico/spam do e-mail informado durante o login.
+- Se o código expirar (após 5 minutos) ou não chegar, refaça o login para disparar um novo envio.
+- Verifique se o serviço SMTP está sincronizado: confirme as variáveis `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USER`, `EMAIL_PASSWORD` e `EMAIL_FROM`, reinicie o processo `server/web_bridge.py` e examine os logs do servidor para erros relacionados a `EmailDeliveryError`.
+
 
 ### Erro de certificado
 

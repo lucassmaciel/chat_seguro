@@ -168,7 +168,7 @@ function Login({ onLogin }) {
       return (
         <form onSubmit={handleRegister} className="space-y-5">
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">E-mail corporativo</label>
+            <label className="block text-sm font-medium text-gray-300 mb-2">E-mail</label>
             <input
               type="email"
               value={form.email}
@@ -178,7 +178,7 @@ function Login({ onLogin }) {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">ID público no chat</label>
+            <label className="block text-sm font-medium text-gray-300 mb-2">Nome de Usuário</label>
             <input
               type="text"
               value={form.clientId}
@@ -303,7 +303,7 @@ function Login({ onLogin }) {
 
           <div className="mt-6 text-center text-xs text-gray-500">
             {step === 'mfa'
-              ? 'Dica: acompanhe o arquivo mfa_emails.log para ver os códigos no ambiente local.'
+              ? 'Dica: confira a caixa de entrada e o lixo eletrônico do e-mail informado; se o código não chegar em até 1 minuto, refaça o login para solicitar um novo.'
               : 'As credenciais protegem seu ID público e suas chaves criptográficas.'}
           </div>
         </div>

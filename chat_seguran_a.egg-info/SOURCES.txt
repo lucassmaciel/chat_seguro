@@ -10,6 +10,8 @@ client/chat_client_logic.py
 client/chat_gui.py
 client/persistence.py
 server/__init__.py
+server/email_service.py
 server/generate_cert.py
 server/server.py
+server/user_store.py
 server/web_bridge.py
