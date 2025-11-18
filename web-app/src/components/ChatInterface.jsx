@@ -16,6 +16,14 @@ function ChatInterface({ clientId, sessionToken, onLogout }) {
   const isInitialLoadRef = useRef(true)
   const wsRef = useRef(null)
 
+  const buildAuthHeaders = (extra = {}) => {
+    const headers = { ...extra }
+    if (sessionToken) {
+      headers['X-Session-Token'] = sessionToken
+    }
+    return headers
+  }
+
   useEffect(() => {
     // Resetar estado quando clientId mudar
     isInitialLoadRef.current = true
@@ -68,9 +76,9 @@ function ChatInterface({ clientId, sessionToken, onLogout }) {
 
   const loadConversations = async () => {
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/api/conversations?client_id=${clientId}`
-      )
+      const response = await fetch(`${API_BASE_URL}/api/conversations`, {
+        headers: buildAuthHeaders(),
+      })
       const data = await response.json()
 
       if (response.status === 401) {
@@ -119,13 +127,12 @@ function ChatInterface({ clientId, sessionToken, onLogout }) {
     try {
       const response = await fetch(`${API_BASE_URL}/api/send-message`, {
         method: 'POST',
-        headers: {
+        headers: buildAuthHeaders({
           'Content-Type': 'application/json',
-        },
+        }),
         body: JSON.stringify({
           to: selectedConversation,
           message: message.trim(),
-          client_id: clientId,
         }),
       })
 
@@ -146,13 +153,12 @@ function ChatInterface({ clientId, sessionToken, onLogout }) {
     try {
       const response = await fetch(`${API_BASE_URL}/api/create-group`, {
         method: 'POST',
-        headers: {
+        headers: buildAuthHeaders({
           'Content-Type': 'application/json',
-        },
+        }),
         body: JSON.stringify({
           group_id: groupName,
           members: members,
-          client_id: clientId,
         }),
       })
 

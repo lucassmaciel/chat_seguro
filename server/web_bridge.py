@@ -186,7 +186,6 @@ class MFAVerifyRequest(BaseModel):
 class SendMessageRequest(BaseModel):
     to: str
     message: str
-    client_id: str = None
 
 
 def notify_websockets(client_id: str, event_type: str, data: dict):
@@ -393,8 +392,10 @@ async def logout(request: Request):
 
 
 @app.get("/api/conversations")
-async def get_conversations(client_id: str):
+async def get_conversations(request: Request):
     """Lista todas as conversas (clientes e grupos)"""
+    _, client_id = _require_session(request)
+
     if client_id not in active_sessions:
         raise HTTPException(status_code=401, detail="Não autenticado")
 
@@ -436,16 +437,15 @@ async def get_conversations(client_id: str):
 
 
 @app.post("/api/send-message")
-async def send_message(request: SendMessageRequest):
+async def send_message(payload: SendMessageRequest, request: Request):
     """Envia uma mensagem privada ou de grupo"""
-    client_id = request.client_id
-    if not client_id:
-        raise HTTPException(status_code=400, detail="client_id é obrigatório")
+    _, client_id = _require_session(request)
+
     if client_id not in active_sessions:
         raise HTTPException(status_code=401, detail="Não autenticado")
 
     logic = active_sessions[client_id]
-    to = request.to
+    to = payload.to
 
     if to not in logic.conversations:
         raise HTTPException(status_code=404, detail="Conversa não encontrada")
@@ -458,14 +458,14 @@ async def send_message(request: SendMessageRequest):
     import time
 
     ts = time.strftime("%H:%M:%S")
-    logic.conversations[to]["history"].append((ts, client_id, request.message))
+    logic.conversations[to]["history"].append((ts, client_id, payload.message))
     # Salvar estado em background para não bloquear
     asyncio.create_task(asyncio.to_thread(logic.save_state))
 
     if conv_type == "private":
-        success, error = await logic.send_private_message(to, request.message)
+        success, error = await logic.send_private_message(to, payload.message)
     elif conv_type == "group":
-        success, error = await logic.send_group_message(to, request.message)
+        success, error = await logic.send_group_message(to, payload.message)
     else:
         raise HTTPException(status_code=400, detail="Tipo de conversa inválido")
 
@@ -482,7 +482,7 @@ async def send_message(request: SendMessageRequest):
     notify_websockets(
         client_id,
         "message_sent",
-        {"to": to, "message": request.message, "timestamp": ts},
+        {"to": to, "message": payload.message, "timestamp": ts},
     )
 
     return JSONResponse({"status": "ok", "message": "Mensagem enviada"})
@@ -491,20 +491,18 @@ async def send_message(request: SendMessageRequest):
 class CreateGroupRequest(BaseModel):
     group_id: str
     members: list[str]
-    client_id: str
 
 
 @app.post("/api/create-group")
-async def create_group(request: CreateGroupRequest):
+async def create_group(payload: CreateGroupRequest, request: Request):
     """Cria um novo grupo"""
-    client_id = request.client_id
-    if not client_id:
-        raise HTTPException(status_code=400, detail="client_id é obrigatório")
+    _, client_id = _require_session(request)
+
     if client_id not in active_sessions:
         raise HTTPException(status_code=401, detail="Não autenticado")
 
     logic = active_sessions[client_id]
-    await logic.create_group(request.group_id, request.members)
+    await logic.create_group(payload.group_id, payload.members)
     logic.save_state()  # Salvar após criar grupo
 
     return JSONResponse({"status": "ok", "message": "Grupo criado"})
