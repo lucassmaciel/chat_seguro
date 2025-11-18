@@ -1,7 +1,7 @@
 """
-Servidor HTTP/WebSocket bridge para interface React
-Faz proxy entre o React e o servidor TLS existente
-Suporta múltiplos clientes simultâneos
+Servidor HTTP/WebSocket bridge para interface React.
+Faz proxy entre o React e o servidor TLS existente.
+Suporta múltiplos clientes simultâneos.
 """
 
 import asyncio
@@ -12,7 +12,6 @@ import sys
 import time
 from os import getenv
 from pathlib import Path
-from typing import Dict, Set
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,22 +27,92 @@ from server.user_store import UserStore
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("web_bridge")
 
+DEFAULT_DEV_ORIGIN = "http://localhost:3000"
+ENV_MODE = getenv("ENV", "development").lower()
+
+
+def _load_allowed_origins(env_mode: str) -> list[str]:
+    """Carrega origens autorizadas a partir de env ou arquivo."""
+    raw_env = getenv("ALLOWED_ORIGINS")
+    config_path = Path(getenv("ALLOWED_ORIGINS_FILE", "allowed_origins.json"))
+    origins: list[str] = []
+
+    if raw_env:
+        origins = [origin.strip() for origin in raw_env.split(",") if origin.strip()]
+    elif config_path.exists():
+        try:
+            data = json.loads(config_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                "O arquivo de origens permitidas deve conter uma lista JSON válida",
+            ) from exc
+
+        if not isinstance(data, list):
+            raise RuntimeError(
+                "O arquivo de origens permitidas deve ser uma lista JSON de strings",
+            )
+
+        origins = [str(origin).strip() for origin in data if str(origin).strip()]
+
+    if env_mode == "production" and not origins:
+        raise RuntimeError(
+            "Configure ALLOWED_ORIGINS (ou um arquivo allowed_origins.json) com os domínios"
+            " autorizados antes de iniciar em produção.",
+        )
+
+    if env_mode != "production" and DEFAULT_DEV_ORIGIN not in origins:
+        origins.append(DEFAULT_DEV_ORIGIN)
+
+    if not origins:
+        log.warning(
+            "Nenhuma origem configurada. O servidor aceitará apenas requisições sem"
+            " cabeçalho Origin.",
+        )
+
+    return origins
+
+
+ALLOWED_ORIGINS = _load_allowed_origins(ENV_MODE)
+ALLOWED_ORIGINS_SET = set(ALLOWED_ORIGINS)
+
 app = FastAPI(title="Chat Seguro Web Bridge")
+
+
+def _is_origin_allowed(origin: str | None) -> bool:
+    if not origin:
+        return ENV_MODE != "production"
+    return origin in ALLOWED_ORIGINS_SET
+
 
 # CORS para permitir conexões do React
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Em produção, especifique o domínio do React
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def enforce_allowed_origins(request: Request, call_next):
+    origin = request.headers.get("origin")
+    if not _is_origin_allowed(origin):
+        log.warning("Origem HTTP não autorizada: %s", origin)
+        return JSONResponse(
+            status_code=403,
+            content={
+                "status": "error",
+                "message": "Origem não autorizada para este servidor",
+            },
+        )
+    return await call_next(request)
+
 # Armazenamento de sessões ativas (suporta múltiplos clientes)
-active_sessions: Dict[str, ChatLogic] = {}
-websocket_connections: Dict[str, Set[WebSocket]] = {}
-pending_mfa: Dict[str, dict] = {}
-session_tokens: Dict[str, dict] = {}
+active_sessions: dict[str, ChatLogic] = {}
+websocket_connections: dict[str, set[WebSocket]] = {}
+pending_mfa: dict[str, dict] = {}
+session_tokens: dict[str, dict] = {}
 
 # Configuração do servidor TLS
 SERVER_HOST = "localhost"
@@ -424,6 +493,12 @@ async def create_group(request: CreateGroupRequest):
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
     """WebSocket para notificações em tempo real - suporta múltiplas conexões por cliente"""
+    origin = websocket.headers.get("origin")
+    if not _is_origin_allowed(origin):
+        log.warning("Origem WebSocket não autorizada: %s", origin)
+        await websocket.close(code=1008)
+        return
+
     await websocket.accept()
 
     if client_id not in websocket_connections:
@@ -431,17 +506,19 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
 
     websocket_connections[client_id].add(websocket)
     log.info(
-        f"WebSocket conectado para {client_id}. Total de conexões: {len(websocket_connections[client_id])}"
+        "WebSocket conectado para %s. Total de conexões: %d",
+        client_id,
+        len(websocket_connections[client_id]),
     )
 
     try:
         while True:
             # Manter conexão viva e receber mensagens (se necessário)
-            data = await websocket.receive_text()
+            await websocket.receive_text()
             # Por enquanto, apenas ecoamos para manter conexão
             await websocket.send_text(json.dumps({"type": "pong"}))
     except WebSocketDisconnect:
-        log.info(f"WebSocket desconectado para {client_id}")
+        log.info("WebSocket desconectado para %s", client_id)
     finally:
         if client_id in websocket_connections:
             websocket_connections[client_id].discard(websocket)
@@ -450,8 +527,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                 pass
 
 
-async def poll_messages(client_id: str):
-    """Polling de mensagens em background - uma task por cliente"""
+async def poll_messages(client_id: str) -> None:
+    """Polling de mensagens em background - uma task por cliente."""
     while client_id in active_sessions:
         try:
             logic = active_sessions[client_id]
