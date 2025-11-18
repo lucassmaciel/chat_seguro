@@ -4,7 +4,7 @@ import ChatWindow from './ChatWindow'
 import CreateGroupModal from './CreateGroupModal'
 import { API_BASE_URL, WS_BASE_URL } from '../config'
 
-function ChatInterface({ clientId, onLogout }) {
+function ChatInterface({ clientId, sessionToken, onLogout }) {
   const [conversations, setConversations] = useState([])
   const [availableClients, setAvailableClients] = useState([])
   const [availableGroups, setAvailableGroups] = useState([])
@@ -169,8 +169,14 @@ function ChatInterface({ clientId, onLogout }) {
 
   const handleLogout = async () => {
     try {
-      await fetch(`${API_BASE_URL}/api/logout?client_id=${clientId}`, {
+      const headers = sessionToken
+        ? {
+            'X-Session-Token': sessionToken,
+          }
+        : undefined
+      await fetch(`${API_BASE_URL}/api/logout`, {
         method: 'POST',
+        headers,
       })
     } catch (error) {
       console.error('Erro no logout:', error)
