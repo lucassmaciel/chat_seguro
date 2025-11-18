@@ -68,10 +68,25 @@ def _load_allowed_origins(env_mode: str) -> list[str]:
     if env_mode != "production" and DEFAULT_DEV_ORIGIN not in origins:
         origins.append(DEFAULT_DEV_ORIGIN)
 
+    # Remover duplicados preservando a ordem para logs mais limpos
+    seen: set[str] = set()
+    unique_origins: list[str] = []
+    for origin in origins:
+        if origin not in seen:
+            unique_origins.append(origin)
+            seen.add(origin)
+    origins = unique_origins
+
     if not origins:
         log.warning(
             "Nenhuma origem configurada. O servidor aceitará apenas requisições sem"
             " cabeçalho Origin.",
+        )
+    else:
+        log.info(
+            "CORS ativo (%s): %s",
+            env_mode,
+            ", ".join(origins),
         )
 
     return origins

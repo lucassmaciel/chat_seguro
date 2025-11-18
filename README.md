@@ -84,7 +84,7 @@ O `server/web_bridge.py` valida todas as origens (HTTP e WebSocket) usando a con
     ]
     ```
 
-Use a variável `ALLOWED_ORIGINS_FILE` caso queira apontar para outro caminho de arquivo. Qualquer origem não listada será rejeitada pelo servidor bridge.
+Se a lista ficar vazia em produção, o servidor falha no startup para evitar exposição indevida; já em desenvolvimento, apenas requisições sem cabeçalho `Origin` serão aceitas se nada estiver configurado. Use a variável `ALLOWED_ORIGINS_FILE` caso queira apontar para outro caminho de arquivo. Qualquer origem não listada será rejeitada pelo servidor bridge e o log de inicialização mostrará exatamente quais domínios foram habilitados.
 
 ### 6. Iniciar a Interface Web React
 
