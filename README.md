@@ -21,7 +21,7 @@ uv sync
 1. Inicie o servidor bridge (passo 5 abaixo)
 2. Acesse `http://localhost:3000`
 3. Escolha **Registrar** e informe e-mail, senha forte e ID público do chat
-4. Faça login e valide o código MFA enviado diretamente ao e-mail cadastrado
+4. Faça login: o código MFA chega imediatamente na caixa de entrada (cheque também o spam/lixo eletrônico), expira em 5 minutos e pode ser reenviado pela própria tela de login se não aparecer ou se tiver expirado
 
 ### 3. Gerar Certificados TLS
 
