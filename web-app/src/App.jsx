@@ -4,13 +4,16 @@ import ChatInterface from './components/ChatInterface'
 
 function App() {
   const [clientId, setClientId] = useState(null)
+  const [sessionToken, setSessionToken] = useState(null)
 
-  const handleLogin = (id) => {
+  const handleLogin = ({ clientId: id, sessionToken: token }) => {
     setClientId(id)
+    setSessionToken(token || null)
   }
 
   const handleLogout = () => {
     setClientId(null)
+    setSessionToken(null)
   }
 
   return (
@@ -18,7 +21,11 @@ function App() {
       {!clientId ? (
         <Login onLogin={handleLogin} />
       ) : (
-        <ChatInterface clientId={clientId} onLogout={handleLogout} />
+        <ChatInterface
+          clientId={clientId}
+          sessionToken={sessionToken}
+          onLogout={handleLogout}
+        />
       )}
     </div>
   )

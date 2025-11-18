@@ -79,7 +79,7 @@ function Login({ onLogin }) {
         setMfaToken(data.token)
         setStatusMessage('Enviamos um código para o seu e-mail. Confira e insira abaixo.')
       } else if (data.status === 'ok') {
-        onLogin(data.client_id)
+        onLogin({ clientId: data.client_id, sessionToken: data.session_token })
       } else {
         setError(data.detail || 'Erro ao realizar login')
       }
@@ -112,7 +112,7 @@ function Login({ onLogin }) {
       })
       const data = await response.json()
       if (data.status === 'ok') {
-        onLogin(data.client_id)
+        onLogin({ clientId: data.client_id, sessionToken: data.session_token })
       } else {
         setError(data.detail || 'Código inválido')
       }

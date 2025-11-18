@@ -14,7 +14,7 @@ from os import getenv
 from pathlib import Path
 from typing import Dict, Set
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr
@@ -43,6 +43,7 @@ app.add_middleware(
 active_sessions: Dict[str, ChatLogic] = {}
 websocket_connections: Dict[str, Set[WebSocket]] = {}
 pending_mfa: Dict[str, dict] = {}
+session_tokens: Dict[str, dict] = {}
 
 # Configuração do servidor TLS
 SERVER_HOST = "localhost"
@@ -73,6 +74,7 @@ def _build_email_service() -> EmailService:
 
 email_service = _build_email_service()
 MFA_TOKEN_TTL = 300  # 5 minutos
+SESSION_TOKEN_BYTES = 48
 
 
 class RegisterRequest(BaseModel):
@@ -161,6 +163,42 @@ async def _establish_session(client_id: str) -> dict:
     return {"client_id": client_id, "session_active": False}
 
 
+def _issue_session_token(client_id: str) -> str:
+    """Cria um token de sessão e remove anteriores para o mesmo cliente."""
+
+    for token, session in list(session_tokens.items()):
+        if session.get("client_id") == client_id:
+            session_tokens.pop(token, None)
+
+    token = secrets.token_urlsafe(SESSION_TOKEN_BYTES)
+    session_tokens[token] = {"client_id": client_id, "issued_at": time.time()}
+    return token
+
+
+def _require_session(request: Request) -> tuple[str, str]:
+    """Obtém o token de sessão a partir de headers/cookies e valida."""
+
+    token = request.headers.get("X-Session-Token")
+    if not token:
+        token = request.cookies.get("session_token")
+
+    if not token:
+        log.warning(
+            "Tentativa de acesso ao endpoint %s sem token de sessão", request.url.path
+        )
+        raise HTTPException(status_code=401, detail="Token de sessão ausente")
+
+    session = session_tokens.get(token)
+    if not session:
+        log.warning(
+            "Tentativa de acesso ao endpoint %s com token inválido",
+            request.url.path,
+        )
+        raise HTTPException(status_code=401, detail="Token de sessão inválido")
+
+    return token, session["client_id"]
+
+
 @app.post("/api/register")
 async def register_user(request: RegisterRequest):
     password = request.password.strip()
@@ -230,12 +268,16 @@ async def verify_mfa(request: MFAVerifyRequest):
 
     pending_mfa.pop(request.token, None)
     session_info = await _establish_session(info["client_id"])
-    return JSONResponse({"status": "ok", **session_info})
+    session_token = _issue_session_token(info["client_id"])
+    response_payload = {"status": "ok", **session_info, "session_token": session_token}
+    return JSONResponse(response_payload)
 
 
 @app.post("/api/logout")
-async def logout(client_id: str):
+async def logout(request: Request):
     """Logout e desconexão"""
+    token, client_id = _require_session(request)
+
     if client_id in active_sessions:
         logic = active_sessions[client_id]
         try:
@@ -255,6 +297,8 @@ async def logout(client_id: str):
             except:
                 pass
         del websocket_connections[client_id]
+
+    session_tokens.pop(token, None)
 
     return JSONResponse({"status": "ok", "message": "Logout realizado"})
 
