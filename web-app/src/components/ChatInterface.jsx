@@ -12,6 +12,7 @@ function ChatInterface({ clientId, sessionToken, onLogout }) {
   const [loading, setLoading] = useState(true)
   const [showCreateGroup, setShowCreateGroup] = useState(false)
   const [syncError, setSyncError] = useState('')
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const isInitialLoadRef = useRef(true)
   const wsRef = useRef(null)
 
@@ -19,6 +20,7 @@ function ChatInterface({ clientId, sessionToken, onLogout }) {
     // Resetar estado quando clientId mudar
     isInitialLoadRef.current = true
     setSelectedConversation(null)
+    setIsSidebarOpen(false)
     setLoading(true)
     setSyncError('')
 
@@ -188,6 +190,14 @@ function ChatInterface({ clientId, sessionToken, onLogout }) {
     (c) => c.id === selectedConversation
   )
 
+  const handleSelectConversation = (conversationId) => {
+    setSelectedConversation(conversationId)
+    setIsSidebarOpen(false)
+  }
+
+  const handleOpenSidebar = () => setIsSidebarOpen(true)
+  const handleCloseSidebar = () => setIsSidebarOpen(false)
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-900">
@@ -200,69 +210,121 @@ function ChatInterface({ clientId, sessionToken, onLogout }) {
   }
 
   return (
-    <div className="h-screen flex overflow-hidden bg-gray-900">
-      {/* Sidebar */}
-      <div className="w-80 bg-gray-800 border-r border-gray-700 flex flex-col shadow-lg">
-        <div className="p-4 border-b border-gray-700 bg-gray-800/80 backdrop-blur-xl">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white font-semibold shadow-lg shadow-blue-500/50">
-                {clientId[0]?.toUpperCase()}
-              </div>
-              <div>
-                <div className="font-semibold text-white text-sm">{clientId}</div>
-                <div className="text-xs text-gray-400 flex items-center">
-                  <span className="w-2 h-2 bg-green-500 rounded-full mr-1.5 animate-pulse"></span>
-                  Online
-                </div>
-              </div>
-            </div>
-            <button
-              onClick={handleLogout}
-              className="p-2 rounded-lg hover:bg-gray-700 transition-colors text-gray-400 hover:text-white"
-              title="Sair"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-              </svg>
-            </button>
+    <div className="min-h-screen w-full bg-gray-900 flex flex-col">
+      <div className="lg:hidden border-b border-gray-800 bg-gray-900/80 px-4 py-3 flex items-center justify-between">
+        <div className="flex items-center space-x-3">
+          <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white font-semibold">
+            {clientId[0]?.toUpperCase()}
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-white">{clientId}</p>
+            <p className="text-xs text-gray-400 flex items-center">
+              <span className="w-2 h-2 bg-green-500 rounded-full mr-1 animate-pulse"></span>
+              Online
+            </p>
           </div>
         </div>
-
-        <ConversationList
-          conversations={conversations}
-          selectedId={selectedConversation}
-          onSelect={setSelectedConversation}
-          onCreateGroup={() => setShowCreateGroup(true)}
-        />
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={handleOpenSidebar}
+            className="px-3 py-2 rounded-lg bg-gray-800 text-gray-200 text-xs font-medium border border-gray-700"
+          >
+            Conversas
+          </button>
+          <button
+            onClick={handleLogout}
+            className="p-2 rounded-lg hover:bg-gray-800 transition-colors text-gray-400 hover:text-white"
+            title="Sair"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+          </button>
+        </div>
       </div>
 
-      {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col bg-gray-900">
-        {syncError && (
-          <div className="px-6 py-3 bg-red-900/40 text-red-200 text-sm text-center border-b border-red-700/40">
-            {syncError}
-          </div>
+      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
+        {/* Sidebar */}
+        {isSidebarOpen && (
+          <button
+            aria-label="Fechar lista de conversas"
+            className="fixed inset-0 bg-black/60 z-20 lg:hidden"
+            onClick={handleCloseSidebar}
+          ></button>
         )}
-        {currentConversation ? (
-          <ChatWindow
-            conversation={currentConversation}
-            clientId={clientId}
-            onSendMessage={handleSendMessage}
-          />
-        ) : (
-          <div className="flex-1 flex items-center justify-center bg-gray-900">
-            <div className="text-center">
-              <div className="w-16 h-16 rounded-full bg-gray-800 flex items-center justify-center mx-auto mb-4">
-                <svg className="w-8 h-8 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                </svg>
+        <div
+          className={`fixed inset-y-0 left-0 z-30 w-full max-w-xs bg-gray-800 border-r border-gray-700 flex flex-col shadow-2xl transform transition-transform duration-300 lg:static lg:translate-x-0 lg:max-w-none lg:w-80 lg:shadow-lg ${
+            isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
+          }`}
+        >
+          <div className="hidden lg:block p-4 border-b border-gray-700 bg-gray-800/80 backdrop-blur-xl">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white font-semibold shadow-lg shadow-blue-500/50">
+                  {clientId[0]?.toUpperCase()}
+                </div>
+                <div>
+                  <div className="font-semibold text-white text-sm">{clientId}</div>
+                  <div className="text-xs text-gray-400 flex items-center">
+                    <span className="w-2 h-2 bg-green-500 rounded-full mr-1.5 animate-pulse"></span>
+                    Online
+                  </div>
+                </div>
               </div>
-              <h2 className="text-xl font-semibold text-gray-300 mb-2">Selecione uma conversa</h2>
-              <p className="text-gray-500 text-sm">Escolha uma conversa da lista para começar</p>
+              <button
+                onClick={handleLogout}
+                className="p-2 rounded-lg hover:bg-gray-700 transition-colors text-gray-400 hover:text-white"
+                title="Sair"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                </svg>
+              </button>
             </div>
           </div>
-        )}
+
+          <ConversationList
+            conversations={conversations}
+            selectedId={selectedConversation}
+            onSelect={handleSelectConversation}
+            onCreateGroup={() => setShowCreateGroup(true)}
+          />
+        </div>
+
+        {/* Main Chat Area */}
+        <div className="flex-1 flex flex-col bg-gray-900 min-h-0">
+          {syncError && (
+            <div className="px-6 py-3 bg-red-900/40 text-red-200 text-sm text-center border-b border-red-700/40">
+              {syncError}
+            </div>
+          )}
+          {currentConversation ? (
+            <ChatWindow
+              conversation={currentConversation}
+              clientId={clientId}
+              onSendMessage={handleSendMessage}
+              onOpenSidebar={handleOpenSidebar}
+            />
+          ) : (
+            <div className="flex-1 flex items-center justify-center bg-gray-900">
+              <div className="text-center">
+                <div className="w-16 h-16 rounded-full bg-gray-800 flex items-center justify-center mx-auto mb-4">
+                  <svg className="w-8 h-8 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  </svg>
+                </div>
+                <h2 className="text-xl font-semibold text-gray-300 mb-2">Selecione uma conversa</h2>
+                <p className="text-gray-500 text-sm">Escolha uma conversa da lista para começar</p>
+                <button
+                  onClick={handleOpenSidebar}
+                  className="mt-4 inline-flex items-center justify-center px-4 py-2 rounded-xl bg-gray-800 text-sm font-semibold text-gray-200 border border-gray-700 lg:hidden"
+                >
+                  Ver conversas
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {showCreateGroup && (

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 
-function ChatWindow({ conversation, clientId, onSendMessage }) {
+function ChatWindow({ conversation, clientId, onSendMessage, onOpenSidebar }) {
   const [message, setMessage] = useState('')
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
@@ -31,13 +31,13 @@ function ChatWindow({ conversation, clientId, onSendMessage }) {
   }
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-gray-900">
+    <div className="flex flex-1 flex-col h-full bg-gray-900 overflow-hidden">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-gray-800 bg-gray-900/80 backdrop-blur-xl">
+      <div className="px-4 sm:px-6 py-4 border-b border-gray-800 bg-gray-900/80 backdrop-blur-xl flex items-center justify-between">
         <div className="flex items-center space-x-3">
           <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg ${
-            conversation.type === 'group' 
-              ? 'bg-gradient-to-br from-purple-500 to-purple-600' 
+            conversation.type === 'group'
+              ? 'bg-gradient-to-br from-purple-500 to-purple-600'
               : 'bg-gradient-to-br from-blue-500 to-blue-600'
           }`}>
             {conversation.type === 'group' ? '👥' : '💬'}
@@ -49,6 +49,12 @@ function ChatWindow({ conversation, clientId, onSendMessage }) {
             </p>
           </div>
         </div>
+        <button
+          onClick={onOpenSidebar}
+          className="lg:hidden px-3 py-2 text-xs font-semibold text-gray-200 bg-gray-800 border border-gray-700 rounded-lg"
+        >
+          Conversas
+        </button>
       </div>
 
       {/* Messages */}
