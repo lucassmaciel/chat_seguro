@@ -33,8 +33,8 @@ uv sync
 
 1. Inicie o servidor bridge (passo 5 abaixo)
 2. Acesse `http://localhost:3000`
-3. Escolha **Registrar** e informe e-mail corporativo, senha forte e ID público do chat
-4. Faça login e valide o código MFA enviado (em desenvolvimento, consulte `mfa_emails.log`)
+3. Escolha **Registrar** e informe e-mail, senha forte e ID público do chat
+4. Faça login: o código MFA chega imediatamente na caixa de entrada (cheque também o spam/lixo eletrônico), expira em 5 minutos e pode ser reenviado pela própria tela de login se não aparecer ou se tiver expirado
 
 ### 3. Gerar Certificados TLS
 
@@ -62,6 +62,43 @@ python server/web_bridge.py
 
 O servidor bridge estará rodando na porta **8000**.
 
+#### Variáveis de e-mail obrigatórias
+
+O envio de códigos MFA utiliza SMTP autenticado com STARTTLS configurado por variáveis de ambiente:
+
+| Variável         | Descrição                                               |
+| ---------------- | ------------------------------------------------------- |
+| `EMAIL_HOST`     | Hostname ou IP do servidor SMTP                         |
+| `EMAIL_PORT`     | Porta TCP do servidor SMTP (ex.: `587`)                 |
+| `EMAIL_USER`     | Usuário da conta de e-mail utilizada no envio           |
+| `EMAIL_PASSWORD` | Senha ou token de app do usuário configurado            |
+| `EMAIL_FROM`     | Endereço completo exibido como remetente do código MFA  |
+
+Em `ENV=development`, a aplicação não envia mensagens reais: o código MFA é registrado no log (`mfa_emails.log`). Nos demais ambientes, todas as variáveis acima precisam estar definidas, caso contrário o servidor não iniciará.
+
+### Configurar domínios autorizados (CORS)
+
+O `server/web_bridge.py` valida todas as origens (HTTP e WebSocket) usando a configuração `ALLOWED_ORIGINS`.
+
+- **Desenvolvimento**: `http://localhost:3000` é permitido automaticamente.
+- **Produção**: defina `ENV=production` e informe explicitamente os domínios front-end usando:
+  - Variável de ambiente `ALLOWED_ORIGINS` com valores separados por vírgula, por exemplo:
+
+    ```bash
+    ENV=production ALLOWED_ORIGINS="https://app.exemplo.com,https://chat.exemplo.com" python server/web_bridge.py
+    ```
+
+  - Ou um arquivo `allowed_origins.json` na raiz contendo uma lista JSON, por exemplo:
+
+    ```json
+    [
+      "https://app.exemplo.com",
+      "https://chat.exemplo.com"
+    ]
+    ```
+
+Use a variável `ALLOWED_ORIGINS_FILE` caso queira apontar para outro caminho de arquivo. Qualquer origem não listada será rejeitada pelo servidor bridge.
+
 ### 6. Iniciar a Interface Web React
 
 Em um novo terminal:
@@ -77,7 +114,7 @@ A interface web estará disponível em `http://localhost:3000`.
 ## 🎯 Como Usar
 
 1. **Acesse a interface web** em `http://localhost:3000`
-2. **Registre-se** com e-mail corporativo, senha forte e ID público do chat (ex: `alice`)
+2. **Registre-se** com e-mail, senha forte e ID público do chat (ex: `alice`)
 3. **Faça login** usando o e-mail/senha e valide o código MFA enviado
 4. **Selecione uma conversa** da lista lateral ou crie um grupo
 5. **Envie mensagens** criptografadas end-to-end
@@ -135,6 +172,13 @@ Chat-Seguran-a/
 - Verifique se o WebSocket está conectado (console do navegador)
 - Verifique os logs do servidor
 - Tente recarregar a página
+
+### Código MFA não recebido
+
+- Aguarde até 1 minuto e confira a caixa de entrada e o lixo eletrônico/spam do e-mail informado durante o login.
+- Se o código expirar (após 5 minutos) ou não chegar, refaça o login para disparar um novo envio.
+- Verifique se o serviço SMTP está sincronizado: confirme as variáveis `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USER`, `EMAIL_PASSWORD` e `EMAIL_FROM`, reinicie o processo `server/web_bridge.py` e examine os logs do servidor para erros relacionados a `EmailDeliveryError`.
+
 
 ### Erro de certificado
 

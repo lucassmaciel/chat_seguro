@@ -15,6 +15,7 @@ function Login({ onLogin }) {
   const [statusMessage, setStatusMessage] = useState('')
   const [mfaToken, setMfaToken] = useState('')
   const [mfaCode, setMfaCode] = useState('')
+  const [resendLoading, setResendLoading] = useState(false)
 
   const resetFeedback = () => {
     setError('')
@@ -77,7 +78,9 @@ function Login({ onLogin }) {
       if (data.status === 'mfa_required') {
         setStep('mfa')
         setMfaToken(data.token)
-        setStatusMessage('Enviamos um código para o seu e-mail. Confira e insira abaixo.')
+        setStatusMessage(
+          'Código enviado! Confira a caixa de entrada (ou spam) e use-o em até 5 minutos.',
+        )
       } else if (data.status === 'ok') {
         onLogin({ clientId: data.client_id, sessionToken: data.session_token })
       } else {
@@ -124,6 +127,44 @@ function Login({ onLogin }) {
     }
   }
 
+  const handleResendMfa = async () => {
+    if (!form.email.trim() || !form.password) {
+      setError('Informe o e-mail e a senha para solicitar um novo código.')
+      setStep('auth')
+      return
+    }
+    resetFeedback()
+    setResendLoading(true)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: form.email.trim(),
+          password: form.password,
+        }),
+      })
+      const data = await response.json()
+      if (data.status === 'mfa_required') {
+        setMfaToken(data.token)
+        setStatusMessage(
+          'Novo código enviado! Confira o e-mail (inclusive spam). Ele expira em 5 minutos.',
+        )
+      } else if (data.status === 'ok') {
+        onLogin({ clientId: data.client_id, sessionToken: data.session_token })
+      } else {
+        setError(data.detail || 'Não foi possível reenviar o código.')
+      }
+    } catch (err) {
+      console.error(err)
+      setError('Erro de conexão ao reenviar o código.')
+    } finally {
+      setResendLoading(false)
+    }
+  }
+
   const renderForm = () => {
     if (step === 'mfa') {
       return (
@@ -140,6 +181,18 @@ function Login({ onLogin }) {
               className="w-full px-4 py-3 bg-gray-700/50 border border-gray-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white placeholder-gray-400"
             />
           </div>
+          <p className="text-xs text-gray-400">
+            Confirme o recebimento do e-mail, inclusive na pasta de spam. O código expira
+            em 5 minutos; se não receber ou se expirar, reenviamos um novo para você.
+          </p>
+          <button
+            type="button"
+            onClick={handleResendMfa}
+            disabled={resendLoading}
+            className="text-sm text-blue-300 hover:text-blue-200 disabled:opacity-50"
+          >
+            {resendLoading ? 'Reenviando código...' : 'Reenviar código'}
+          </button>
           <div className="flex space-x-3">
             <button
               type="button"
@@ -303,7 +356,7 @@ function Login({ onLogin }) {
 
           <div className="mt-6 text-center text-xs text-gray-500">
             {step === 'mfa'
-              ? 'Dica: confira a caixa de entrada e o lixo eletrônico do e-mail informado; se o código não chegar em até 1 minuto, refaça o login para solicitar um novo.'
+              ? 'Dica: o código MFA chega por e-mail (verifique também spam) e expira em 5 minutos. Use "Reenviar código" se precisar de outro.'
               : 'As credenciais protegem seu ID público e suas chaves criptográficas.'}
           </div>
         </div>
