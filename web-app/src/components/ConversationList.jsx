@@ -16,7 +16,7 @@ function ConversationList({ conversations, selectedId, onSelect, onCreateGroup }
   }
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
+    <div className="flex-1 flex flex-col overflow-hidden min-h-0">
       <div className="px-4 py-3 border-b border-gray-700 flex items-center justify-between bg-gray-800/50">
         <h3 className="text-sm font-semibold text-gray-300">Conversas</h3>
         <button
