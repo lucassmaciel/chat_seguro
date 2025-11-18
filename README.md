@@ -135,9 +135,9 @@ Chat-Seguran-a/
 │   ├── web_bridge.py      # Servidor HTTP/WebSocket bridge
 │   └── generate_cert.py   # Gerador de certificados
 ├── client/
-│   ├── chat_client_logic.py  # Lógica de criptografia e comunicação
-│   └── chat_gui.py          # Interface Tkinter (legado)
-├── web-app/                 # Interface React
+│   ├── chat_client_logic.py  # Núcleo de criptografia compartilhado
+│   └── persistence.py        # Utilitários de armazenamento local
+├── web-app/                 # Interface React (front-end oficial)
 │   ├── src/
 │   │   ├── components/     # Componentes React
 │   │   ├── App.jsx
