@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import smtplib
 import ssl
 from dataclasses import dataclass
@@ -27,6 +28,9 @@ class EmailServiceError(RuntimeError):
 
 class EmailDeliveryError(EmailServiceError):
     """Erro lançado ao enviar a mensagem para o provedor."""
+
+
+log = logging.getLogger(__name__)
 
 
 class EmailService:
@@ -72,7 +76,10 @@ class EmailService:
             return
 
         message = self._build_message(email, code)
-        self._send_via_smtp(message)
+        try:
+            self._send_via_smtp(message)
+        except (smtplib.SMTPException, OSError) as exc:  # pragma: no cover - rede externa
+            raise EmailDeliveryError("Falha ao enviar e-mail via SMTP") from exc
 
     def _build_message(self, recipient: str, code: str) -> EmailMessage:
         subject = "Código MFA - Chat Seguro"
@@ -106,21 +113,19 @@ class EmailService:
         password = self.settings.password
         if password is None:
             raise EmailServiceError("EMAIL_PASSWORD não configurado")
-        try:
-            with smtplib.SMTP(
-                host,
-                port,
-                timeout=self.timeout,
-            ) as server:
-                server.starttls(context=self._ssl_context)
-                server.login(username, password)
-                server.send_message(message)
-        except (smtplib.SMTPException, OSError) as exc:
-            raise EmailDeliveryError("Falha ao enviar e-mail via SMTP") from exc
+        with smtplib.SMTP(
+            host,
+            port,
+            timeout=self.timeout,
+        ) as server:
+            server.starttls(context=self._ssl_context)
+            server.login(username, password)
+            server.send_message(message)
 
     def _log_code(self, email: str, code: str) -> None:
         timestamp = dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z")
         line = f"{timestamp} | MFA | {email} | code={code}\n"
+        log.info("[DEV] MFA para %s: %s", email, code)
         with self.log_path.open("a", encoding="utf-8") as fp:
             fp.write(line)
 
