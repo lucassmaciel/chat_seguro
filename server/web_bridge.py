@@ -37,6 +37,16 @@ DEFAULT_DEV_ORIGIN = "http://localhost:3000"
 ENV_MODE = getenv("ENV", "development").lower()
 
 
+def _parse_int_env(var_name: str, default: int) -> int:
+    raw_value = getenv(var_name)
+    if raw_value is None:
+        return default
+    try:
+        return int(raw_value)
+    except ValueError as exc:  # noqa: TRY003
+        raise RuntimeError(f"{var_name} deve ser um inteiro válido") from exc
+
+
 def _load_allowed_origins(env_mode: str) -> list[str]:
     """Carrega origens autorizadas a partir de env ou arquivo."""
     raw_env = getenv("ALLOWED_ORIGINS")
@@ -129,6 +139,11 @@ async def enforce_allowed_origins(request: Request, call_next):
         )
     return await call_next(request)
 
+
+@app.get("/api/health")
+async def healthcheck():
+    return {"status": "ok", "mode": ENV_MODE, "sessions": len(active_sessions)}
+
 # Armazenamento de sessões ativas (suporta múltiplos clientes)
 active_sessions: dict[str, ChatLogic] = {}
 websocket_connections: dict[str, set[WebSocket]] = {}
@@ -136,9 +151,9 @@ pending_mfa: dict[str, dict] = {}
 session_tokens: dict[str, dict] = {}
 
 # Configuração do servidor TLS
-SERVER_HOST = "localhost"
-SERVER_PORT = 4433
-CACERT = "cert.pem"
+SERVER_HOST = getenv("TLS_HOST", "127.0.0.1")
+SERVER_PORT = _parse_int_env("TLS_PORT", 4433)
+CACERT = getenv("TLS_CACERT", "cert.pem")
 
 user_store = UserStore(DEFAULT_DB_PATH)
 

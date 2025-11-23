@@ -1,0 +1,8 @@
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "python railway_start.py"
+healthcheckPath = "/api/health"
+healthcheckTimeout = 10
+restartPolicyType = "on_failure"

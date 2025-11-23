@@ -20,7 +20,20 @@ python -m pytest
 
 Os testes verificam persistência, armazenamento seguro de usuários, políticas de CORS, emissão de tokens de sessão e logs de MFA sem envio real de e-mails.
 
-## 3. Execução em produção
+## 3. Deploy no Railway (Nixpacks)
+
+- O arquivo `railway.toml` já define o builder Nixpacks, health check em `/api/health` e comando de start `python railway_start.py`.
+- Crie um projeto no Railway, conecte o repositório e defina as variáveis de ambiente abaixo na aba **Variables**:
+  - `ENV=production`
+  - `PORT=8000` (ou deixe o padrão do Railway)
+  - `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USER`, `EMAIL_PASSWORD`, `EMAIL_FROM`
+  - `ALLOWED_ORIGINS` (domínios front-end separados por vírgula)
+  - Opcional: `TLS_HOST=127.0.0.1`, `TLS_PORT=4433`, `TLS_CERT_FILE`/`TLS_KEY_FILE` se você enviar certificados próprios
+- O Railway expõe apenas a porta `$PORT`; o servidor TLS fica interno no container, consumido pelo bridge via loopback.
+- Logs e health check ficam disponíveis diretamente no painel do Railway (`/api/health`).
+- Para secrets como certs, use **Variables** com valor em PEM (montados em volume temporário) ou um `Secret File`.
+
+## 4. Execução em produção
 
 ### Opção recomendada: containers
 1. **Build**
@@ -54,14 +67,14 @@ Os testes verificam persistência, armazenamento seguro de usuários, políticas
    ENV=production uvicorn server.web_bridge:app --host 0.0.0.0 --port 8000
    ```
 
-## 4. Checklist de segurança
+## 5. Checklist de segurança
 - **Confidencialidade**: TLS ativo (certificados válidos), CORS restrito, chaves privadas protegidas por permissões de arquivo/segredos.
 - **Integridade**: Banco SQLite em modo WAL, PBKDF2 para senhas, MACs fornecidos pelas caixas criptográficas NaCl.
 - **Disponibilidade**: Use restart policies (`--restart unless-stopped` no Docker), monitore `/api/status`, e configure backups do banco.
 - **Autenticidade**: MFA por e-mail, tokens de sessão de alta entropia e certificados TLS assinados por autoridade confiável.
 
-## 5. Observabilidade
+## 6. Observabilidade
 - Centralize logs (stdout/servidor) e ative monitoração de falhas de e-mail.
-- Exponha métricas básicas via `/api/status` para health checks.
+- Exponha métricas básicas via `/api/status` e `/api/health` para health checks.
 
 Seguindo estes passos, o projeto fica pronto para produção com validações automatizadas e controles de segurança alinhados aos pilares fundamentais.
