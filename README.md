@@ -78,26 +78,24 @@ Com essas variáveis presentes, os códigos MFA serão enviados diretamente para
 
 ### Configurar domínios autorizados (CORS)
 
-O `server/web_bridge.py` valida todas as origens (HTTP e WebSocket) usando a configuração `ALLOWED_ORIGINS`.
+Por padrão o CORS está **aberto** para qualquer origem (HTTP ou WebSocket), facilitando o uso em ambientes universitários ou testes rápidos. Caso queira restringir:
 
-- **Desenvolvimento**: `http://localhost:3000` é permitido automaticamente.
-- **Produção**: defina `ENV=production` e informe explicitamente os domínios front-end usando:
-  - Variável de ambiente `ALLOWED_ORIGINS` com valores separados por vírgula, por exemplo:
+- Defina a variável de ambiente `ALLOWED_ORIGINS` com valores separados por vírgula, por exemplo:
 
-    ```bash
-    ENV=production ALLOWED_ORIGINS="https://app.exemplo.com,https://chat.exemplo.com" python server/web_bridge.py
-    ```
+  ```bash
+  ALLOWED_ORIGINS="https://app.exemplo.com,https://chat.exemplo.com" python server/web_bridge.py
+  ```
 
-  - Ou um arquivo `allowed_origins.json` na raiz contendo uma lista JSON, por exemplo:
+- Ou crie um arquivo `allowed_origins.json` na raiz contendo uma lista JSON:
 
-    ```json
-    [
-      "https://app.exemplo.com",
-      "https://chat.exemplo.com"
-    ]
-    ```
+  ```json
+  [
+    "https://app.exemplo.com",
+    "https://chat.exemplo.com"
+  ]
+  ```
 
-Se a lista ficar vazia em produção, o servidor falha no startup para evitar exposição indevida; já em desenvolvimento, apenas requisições sem cabeçalho `Origin` serão aceitas se nada estiver configurado. Use a variável `ALLOWED_ORIGINS_FILE` caso queira apontar para outro caminho de arquivo. Qualquer origem não listada será rejeitada pelo servidor bridge e o log de inicialização mostrará exatamente quais domínios foram habilitados.
+Se alguma origem estiver configurada, apenas os domínios informados serão aceitos; caso contrário, qualquer origem será permitida. Use a variável `ALLOWED_ORIGINS_FILE` caso queira apontar para outro caminho de arquivo.
 
 ### 6. Iniciar a Interface Web React
 

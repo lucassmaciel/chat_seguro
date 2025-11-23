@@ -37,7 +37,6 @@ log = logging.getLogger("web_bridge")
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
-DEFAULT_DEV_ORIGIN = "http://localhost:3000"
 ENV_MODE = getenv("ENV", "development").lower()
 
 
@@ -78,15 +77,6 @@ def _load_allowed_origins(env_mode: str) -> list[str]:
 
         origins = [_normalize_origin(str(origin).strip()) for origin in data if str(origin).strip()]
 
-    if env_mode == "production" and not origins:
-        raise RuntimeError(
-            "Configure ALLOWED_ORIGINS (ou um arquivo allowed_origins.json) com os domínios"
-            " autorizados antes de iniciar em produção.",
-        )
-
-    if env_mode != "production" and DEFAULT_DEV_ORIGIN not in origins:
-        origins.append(DEFAULT_DEV_ORIGIN)
-
     # Remover duplicados preservando a ordem para logs mais limpos
     seen: set[str] = set()
     unique_origins: list[str] = []
@@ -97,16 +87,17 @@ def _load_allowed_origins(env_mode: str) -> list[str]:
             seen.add(normalized_origin)
     origins = unique_origins
 
-    if not origins:
-        log.warning(
-            "Nenhuma origem configurada. O servidor aceitará apenas requisições sem"
-            " cabeçalho Origin.",
-        )
-    else:
+    if origins:
         log.info(
-            "CORS ativo (%s): %s",
+            "CORS restrito (%s): %s",
             env_mode,
             ", ".join(origins),
+        )
+    else:
+        log.warning(
+            "Nenhuma origem configurada. O CORS ficará aberto para qualquer origem no"
+            " modo %s.",
+            env_mode,
         )
 
     return origins
@@ -119,23 +110,33 @@ app = FastAPI(title="Chat Seguro Web Bridge")
 
 
 def _is_origin_allowed(origin: str | None) -> bool:
+    if not ALLOWED_ORIGINS_SET:
+        return True
     if not origin:
-        return ENV_MODE != "production"
+        return False
     return _normalize_origin(origin) in ALLOWED_ORIGINS_SET
 
 
 # CORS para permitir conexões do React
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+cors_kwargs = {
+    "allow_credentials": True,
+    "allow_methods": ["*"],
+    "allow_headers": ["*"],
+}
+
+if ALLOWED_ORIGINS:
+    cors_kwargs["allow_origins"] = ALLOWED_ORIGINS
+else:
+    cors_kwargs["allow_origin_regex"] = ".*"
+
+app.add_middleware(CORSMiddleware, **cors_kwargs)
 
 
 @app.middleware("http")
 async def enforce_allowed_origins(request: Request, call_next):
+    if not ALLOWED_ORIGINS_SET:
+        return await call_next(request)
+
     origin = request.headers.get("origin")
     if not _is_origin_allowed(origin):
         log.warning("Origem HTTP não autorizada: %s", origin)
