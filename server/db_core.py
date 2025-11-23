@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 DEFAULT_DB_PATH = Path("chatseguro.db")
 
@@ -16,6 +17,7 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
         cur = conn.cursor()
 
         cur.execute("PRAGMA journal_mode=WAL;")
+        cur.execute("PRAGMA foreign_keys=ON;")
 
         cur.executescript(
             """
@@ -48,10 +50,11 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
 
 
 @contextmanager
-def get_conn(db_path: str | Path = DEFAULT_DB_PATH):
+def get_conn(db_path: str | Path = DEFAULT_DB_PATH) -> Iterator[sqlite3.Connection]:
     conn = sqlite3.connect(db_path)
     try:
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys=ON;")
         yield conn
         conn.commit()
     finally:

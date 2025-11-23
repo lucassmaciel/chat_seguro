@@ -74,3 +74,18 @@ def test_store_pubkey_writes_to_db(tmp_path):
 
     assert row["pubkey_b64"] == "base64pub"
     assert module.PUBLIC_KEYS["alice"] == "base64pub"
+
+
+def test_messages_persist_across_restart(tmp_path):
+    module = load_server_module(tmp_path)
+
+    module.persist_message(
+        recipient_id="bob", sender_id="alice", blob="ciphertext", meta={"id": 1}
+    )
+
+    module_restarted = load_server_module(tmp_path)
+
+    pending = module_restarted.fetch_pending_messages("bob")
+
+    assert pending == [{"from": "alice", "blob": "ciphertext", "meta": {"id": 1}}]
+    assert module_restarted.fetch_pending_messages("bob") == []

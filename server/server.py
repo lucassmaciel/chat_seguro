@@ -33,11 +33,95 @@ log = logging.getLogger("chatseguro.server")
 
 DB_PATH = DEFAULT_DB_PATH
 PUBLIC_KEYS = {}  # client_id -> base64 pubkey
-BLOBS = {}  # recipient_id -> [ {from, blob(base64), meta} ]
 ACTIVE_CLIENTS = {}  # client_id -> {reader, writer}
 GROUPS = {}  # group_id -> { "members": [client_id], "admin": client_id }
 TLS_CERT = None
 TLS_KEY = None
+
+
+def load_groups_from_db() -> None:
+    global GROUPS
+
+    with get_conn(DB_PATH) as conn:
+        cur = conn.cursor()
+        group_rows = cur.execute("SELECT group_id, admin FROM groups").fetchall()
+        member_rows = cur.execute(
+            "SELECT group_id, client_id FROM group_members"
+        ).fetchall()
+
+    groups: dict[str, dict[str, list[str] | str]] = {}
+    for row in group_rows:
+        groups[row["group_id"]] = {"admin": row["admin"], "members": []}
+
+    for member_row in member_rows:
+        group = groups.setdefault(
+            member_row["group_id"], {"admin": "", "members": []}
+        )
+        group["members"].append(member_row["client_id"])
+
+    GROUPS = groups
+
+
+def persist_group(group_id: str, members: list[str], admin: str) -> None:
+    with get_conn(DB_PATH) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO groups (group_id, admin) VALUES (?, ?)",
+            (group_id, admin),
+        )
+        conn.executemany(
+            "INSERT OR IGNORE INTO group_members (group_id, client_id) VALUES (?, ?)",
+            [(group_id, member) for member in members],
+        )
+
+
+def persist_message(
+    *,
+    recipient_id: str,
+    sender_id: str,
+    blob: str,
+    meta: dict | None = None,
+    group_id: str | None = None,
+    msg_type: str = "private",
+) -> None:
+    meta_json = json.dumps(meta or {})
+    with get_conn(DB_PATH) as conn:
+        conn.execute(
+            """
+            INSERT INTO messages (recipient_id, sender_id, blob_b64, meta_json, group_id, msg_type)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (recipient_id, sender_id, blob, meta_json, group_id, msg_type),
+        )
+
+
+def fetch_pending_messages(client_id: str) -> list[dict]:
+    with get_conn(DB_PATH) as conn:
+        conn.execute("BEGIN IMMEDIATE;")
+        rows = conn.execute(
+            """
+            SELECT id, sender_id, blob_b64, meta_json, group_id, msg_type
+            FROM messages
+            WHERE recipient_id = ?
+            ORDER BY id
+            """,
+            (client_id,),
+        ).fetchall()
+        ids = [row["id"] for row in rows]
+        if ids:
+            placeholders = ",".join("?" for _ in ids)
+            conn.execute(f"DELETE FROM messages WHERE id IN ({placeholders})", ids)
+
+    pending: list[dict] = []
+    for row in rows:
+        message = {"from": row["sender_id"], "blob": row["blob_b64"]}
+        if row["msg_type"] == "group":
+            message["group_id"] = row["group_id"]
+            message["type"] = "group"
+        else:
+            message["meta"] = json.loads(row["meta_json"] or "{}")
+        pending.append(message)
+
+    return pending
 
 
 def init_pubkeys():
@@ -60,6 +144,8 @@ def init_pubkeys():
         "  └─ ✅ Tabela public_keys carregada (%d chaves públicas)",
         len(PUBLIC_KEYS),
     )
+    load_groups_from_db()
+    log.info("  └─ ✅ Tabelas de grupos carregadas (%d grupos)", len(GROUPS))
     log.info("=" * 70)
 
 
@@ -224,8 +310,12 @@ async def handle_reader(reader, writer):
                 if not to or not frm or not blob:
                     await send_error(writer, "send_blob requer to, from e blob")
                     continue
-                BLOBS.setdefault(to, []).append(
-                    {"from": frm, "blob": blob, "meta": meta}
+                persist_message(
+                    recipient_id=to,
+                    sender_id=frm,
+                    blob=blob,
+                    meta=meta,
+                    msg_type="private",
                 )
 
                 log.info("")
@@ -263,6 +353,7 @@ async def handle_reader(reader, writer):
                     continue
 
                 GROUPS[group_id] = {"members": members, "admin": admin}
+                persist_group(group_id, members, admin)
 
                 log.info("")
                 log.info("[server.py][GRUPO][CREATE] Novo grupo criado")
@@ -315,13 +406,12 @@ async def handle_reader(reader, writer):
                 # distribuir a mensagem para os outros membros
                 for member in group["members"]:
                     if member != frm:
-                        BLOBS.setdefault(member, []).append(
-                            {
-                                "from": frm,
-                                "blob": blob,
-                                "group_id": group_id,
-                                "type": "group",
-                            }
+                        persist_message(
+                            recipient_id=member,
+                            sender_id=frm,
+                            blob=blob,
+                            group_id=group_id,
+                            msg_type="group",
                         )
                 await send_ok(writer, {"message": "stored for group"})
 
@@ -330,7 +420,7 @@ async def handle_reader(reader, writer):
                 if not cid:
                     await send_error(writer, "fetch_blobs requer client_id")
                     continue
-                items = BLOBS.pop(cid, [])
+                items = fetch_pending_messages(cid)
 
                 if items:
                     log.info("")
@@ -340,6 +430,18 @@ async def handle_reader(reader, writer):
                     )
                     log.info("  └─ Cliente: %s", cid)
                     log.info("  └─ Quantidade de mensagens: %d", len(items))
+                    log.info(
+                        "  └─ Fila limpa de forma transacional para %s:%s",
+                        *(addr or ("desconhecido", "-")),
+                    )
+                else:
+                    log.info("")
+                    log.info("[server.py][FETCH] Nenhuma mensagem pendente")
+                    log.info("  └─ Cliente: %s", cid)
+                    log.info(
+                        "  └─ Requisição recebida de %s:%s",
+                        *(addr or ("desconhecido", "-")),
+                    )
 
                 await send_ok(writer, {"messages": items})
 
