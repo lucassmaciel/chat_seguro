@@ -54,13 +54,8 @@ python server/web_bridge.py
 
 O servidor bridge estará rodando na porta **8000**.
 
-#### Ajustar verificação de certificado em desenvolvimento
-
-Se o certificado TLS tiver o `CN`/`SAN` para `localhost` mas você conectar via `127.0.0.1`, ajuste a verificação de hostname:
-
-- Use `TLS_SERVER_NAME=localhost` para que o cliente TLS valide o nome correto mesmo usando IP.
-- Em último caso (somente para testes locais), defina `TLS_INSECURE_SKIP_VERIFY=true` para ignorar validação de hostname e
-  certificado.
+Este bridge é exclusivo para ambiente local. Ele sempre se conecta ao servidor TLS via `127.0.0.1:4433`, usando o certificado
+`cert.pem` gerado na raiz do projeto. Não há mais variáveis de ambiente para alterar verificação de hostname ou certificados.
 
 #### Variáveis de e-mail obrigatórias
 
@@ -91,9 +86,9 @@ Com essas variáveis presentes, os códigos MFA serão enviados diretamente para
 
 ### Configurar domínios autorizados (CORS)
 
-Para facilitar o uso acadêmico/local, o `server/web_bridge.py` está configurado para aceitar **qualquer origem** tanto em HTTP quanto em WebSocket. Não é necessário definir `ALLOWED_ORIGINS` ou arquivos auxiliares para iniciar o servidor e testar o MFA com envios reais de e-mail.
+O `server/web_bridge.py` agora está fixo para uso em loopback, com CORS totalmente liberado para facilitar o desenvolvimento local tanto em HTTP quanto em WebSocket. Não há variáveis de ambiente de TLS para configurar hostname ou certificados.
 
-Caso pretenda expor o serviço publicamente no futuro, ajuste o middleware de CORS no `web_bridge` para restringir os domínios permitidos.
+Caso pretenda expor o serviço publicamente no futuro, personalize manualmente o middleware de CORS no `web_bridge` e ajuste o destino TLS conforme necessário.
 
 ### 6. Iniciar a Interface Web React
 
