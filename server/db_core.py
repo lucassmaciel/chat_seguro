@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 DEFAULT_DB_PATH = Path("chatseguro.db")
 
@@ -42,7 +42,37 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
                 key_pem TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS groups (
+                group_id TEXT PRIMARY KEY,
+                admin TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS group_members (
+                group_id TEXT NOT NULL,
+                client_id TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (group_id, client_id),
+                FOREIGN KEY (group_id) REFERENCES groups(group_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipient_id TEXT NOT NULL,
+                sender_id TEXT NOT NULL,
+                blob_b64 TEXT NOT NULL,
+                meta_json TEXT,
+                group_id TEXT,
+                msg_type TEXT NOT NULL DEFAULT 'private',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (group_id) REFERENCES groups(group_id) ON DELETE SET NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages(recipient_id);
+            CREATE INDEX IF NOT EXISTS idx_group_members_group ON group_members(group_id);
             """
+            ,
         )
         conn.commit()
     finally:
@@ -74,7 +104,7 @@ def get_tls_credentials(db_path: str | Path = DEFAULT_DB_PATH) -> tuple[str, str
 
 
 def store_tls_credentials(
-    cert_pem: str, key_pem: str, db_path: str | Path = DEFAULT_DB_PATH
+    cert_pem: str, key_pem: str, db_path: str | Path = DEFAULT_DB_PATH,
 ) -> None:
     with get_conn(db_path) as conn:
         cur = conn.cursor()

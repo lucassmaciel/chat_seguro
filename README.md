@@ -54,8 +54,9 @@ python server/web_bridge.py
 
 O servidor bridge estará rodando na porta **8000**.
 
-Este bridge é exclusivo para ambiente local. Ele sempre se conecta ao servidor TLS via `127.0.0.1:4433`, usando o certificado
-`cert.pem` gerado na raiz do projeto. Não há mais variáveis de ambiente para alterar verificação de hostname ou certificados.
+Este bridge é exclusivo para ambiente local. Ele sempre se conecta ao servidor TLS via `127.0.0.1:4433` e aceita o certificado
+autoassinado gerado pelo servidor diretamente do SQLite, sem exigir arquivos `cert.pem`/`key.pem` ou variáveis extras para
+hostname/CA.
 
 #### Variáveis de e-mail obrigatórias
 
