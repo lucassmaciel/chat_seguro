@@ -37,8 +37,13 @@ log = logging.getLogger("web_bridge")
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
-DEFAULT_DEV_ORIGIN = "http://localhost:3000"
 ENV_MODE = getenv("ENV", "development").lower()
+TLS_SERVER_NAME = getenv("TLS_SERVER_NAME")
+TLS_INSECURE_SKIP_VERIFY = getenv("TLS_INSECURE_SKIP_VERIFY", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+}
 
 
 def _parse_int_env(var_name: str, default: int) -> int:
@@ -78,15 +83,6 @@ def _load_allowed_origins(env_mode: str) -> list[str]:
 
         origins = [_normalize_origin(str(origin).strip()) for origin in data if str(origin).strip()]
 
-    if env_mode == "production" and not origins:
-        raise RuntimeError(
-            "Configure ALLOWED_ORIGINS (ou um arquivo allowed_origins.json) com os domínios"
-            " autorizados antes de iniciar em produção.",
-        )
-
-    if env_mode != "production" and DEFAULT_DEV_ORIGIN not in origins:
-        origins.append(DEFAULT_DEV_ORIGIN)
-
     # Remover duplicados preservando a ordem para logs mais limpos
     seen: set[str] = set()
     unique_origins: list[str] = []
@@ -97,16 +93,17 @@ def _load_allowed_origins(env_mode: str) -> list[str]:
             seen.add(normalized_origin)
     origins = unique_origins
 
-    if not origins:
-        log.warning(
-            "Nenhuma origem configurada. O servidor aceitará apenas requisições sem"
-            " cabeçalho Origin.",
-        )
-    else:
+    if origins:
         log.info(
-            "CORS ativo (%s): %s",
+            "CORS restrito (%s): %s",
             env_mode,
             ", ".join(origins),
+        )
+    else:
+        log.warning(
+            "Nenhuma origem configurada. O CORS ficará aberto para qualquer origem no"
+            " modo %s.",
+            env_mode,
         )
 
     return origins
@@ -119,23 +116,33 @@ app = FastAPI(title="Chat Seguro Web Bridge")
 
 
 def _is_origin_allowed(origin: str | None) -> bool:
+    if not ALLOWED_ORIGINS_SET:
+        return True
     if not origin:
-        return ENV_MODE != "production"
+        return False
     return _normalize_origin(origin) in ALLOWED_ORIGINS_SET
 
 
 # CORS para permitir conexões do React
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+cors_kwargs = {
+    "allow_credentials": True,
+    "allow_methods": ["*"],
+    "allow_headers": ["*"],
+}
+
+if ALLOWED_ORIGINS:
+    cors_kwargs["allow_origins"] = ALLOWED_ORIGINS
+else:
+    cors_kwargs["allow_origin_regex"] = ".*"
+
+app.add_middleware(CORSMiddleware, **cors_kwargs)
 
 
 @app.middleware("http")
 async def enforce_allowed_origins(request: Request, call_next):
+    if not ALLOWED_ORIGINS_SET:
+        return await call_next(request)
+
     origin = request.headers.get("origin")
     if not _is_origin_allowed(origin):
         log.warning("Origem HTTP não autorizada: %s", origin)
@@ -249,7 +256,14 @@ async def _establish_session(client_id: str) -> dict:
     if client_id in active_sessions:
         return {"client_id": client_id, "session_active": True}
 
-    logic = ChatLogic(SERVER_HOST, SERVER_PORT, CACERT, client_id)
+    logic = ChatLogic(
+        SERVER_HOST,
+        SERVER_PORT,
+        CACERT,
+        client_id,
+        server_name=TLS_SERVER_NAME,
+        insecure_skip_verify=TLS_INSECURE_SKIP_VERIFY,
+    )
 
     def on_new_message(peer, message):
         notify_websockets(client_id, "new_message", {"peer": peer, "message": message})
@@ -260,9 +274,31 @@ async def _establish_session(client_id: str) -> dict:
     logic.on_new_message = on_new_message
     logic.on_update_ui = on_update_ui
 
-    success = await logic.publish_key()
-    if not success:
-        raise HTTPException(status_code=500, detail="Falha ao publicar chave")
+    try:
+        publish_response = await logic.publish_key()
+    except Exception as exc:  # noqa: BLE001
+        log.error("Erro ao publicar chave para %s: %s", client_id, exc)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Não foi possível se conectar ao servidor TLS. "
+                "Verifique se ele está em execução."
+            ),
+        ) from exc
+
+    if publish_response.get("status") != "ok":
+        reason = publish_response.get("reason") or "Falha ao publicar chave"
+        log.error("Publicação de chave falhou para %s: %s", client_id, reason)
+        tls_hint = ""
+        if "CERTIFICATE_VERIFY_FAILED" in reason:
+            tls_hint = (
+                " (verifique o nome do certificado com TLS_SERVER_NAME ou use "
+                "TLS_INSECURE_SKIP_VERIFY em ambiente local)"
+            )
+        raise HTTPException(
+            status_code=503,
+            detail=f"Falha ao conectar ao servidor TLS: {reason}{tls_hint}",
+        )
 
     active_sessions[client_id] = logic
     websocket_connections[client_id] = set()

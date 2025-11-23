@@ -143,22 +143,36 @@ class DebugBox:
 # TLS client
 # =========================================
 class TLSSocketClient:
-    def __init__(self, host, port, cafile=None):
+    def __init__(
+        self,
+        host,
+        port,
+        cafile=None,
+        *,
+        server_name: str | None = None,
+        insecure_skip_verify: bool = False,
+    ):
         self.host = host
         self.port = port
         self.cafile = cafile
+        self.server_name = server_name
+        self.insecure_skip_verify = insecure_skip_verify
 
     async def send_recv(self, obj):
         try:
             sslctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-            if self.cafile:
-                sslctx.load_verify_locations(self.cafile)
-            else:
+            if self.insecure_skip_verify:
                 sslctx.check_hostname = False
                 sslctx.verify_mode = ssl.CERT_NONE
+            elif self.cafile:
+                sslctx.load_verify_locations(self.cafile)
 
+            server_hostname = self.server_name or self.host
             reader, writer = await asyncio.open_connection(
-                self.host, self.port, ssl=sslctx
+                self.host,
+                self.port,
+                ssl=sslctx,
+                server_hostname=server_hostname,
             )
             writer.write((json.dumps(obj) + "\n").encode())
             await writer.drain()
@@ -176,9 +190,23 @@ class TLSSocketClient:
 # Chat logic
 # =========================================
 class ChatLogic:
-    def __init__(self, server_host, server_port, cacert, client_id):
+    def __init__(
+        self,
+        server_host,
+        server_port,
+        cacert,
+        client_id,
+        server_name: str | None = None,
+        insecure_skip_verify: bool = False,
+    ):
         self.client_id = client_id
-        self.client = TLSSocketClient(server_host, server_port, cacert)
+        self.client = TLSSocketClient(
+            server_host,
+            server_port,
+            cacert,
+            server_name=server_name,
+            insecure_skip_verify=insecure_skip_verify,
+        )
         self.priv, self.pub = self.load_or_create_keys(client_id)
 
         # Carregar conversas salvas
@@ -205,14 +233,13 @@ class ChatLogic:
         return priv, pub
 
     async def publish_key(self):
-        resp = await self.client.send_recv(
+        return await self.client.send_recv(
             {
                 "type": "publish_key",
                 "client_id": self.client_id,
                 "pubkey": b64(self.pub),
             }
         )
-        return resp.get("status") == "ok"
 
     async def list_all(self):
         resp = await self.client.send_recv(
