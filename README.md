@@ -49,6 +49,14 @@ python server/web_bridge.py
 
 O servidor bridge estará rodando na porta **8000**.
 
+#### Ajustar verificação de certificado em desenvolvimento
+
+Se o certificado TLS tiver o `CN`/`SAN` para `localhost` mas você conectar via `127.0.0.1`, ajuste a verificação de hostname:
+
+- Use `TLS_SERVER_NAME=localhost` para que o cliente TLS valide o nome correto mesmo usando IP.
+- Em último caso (somente para testes locais), defina `TLS_INSECURE_SKIP_VERIFY=true` para ignorar validação de hostname e
+  certificado.
+
 #### Variáveis de e-mail obrigatórias
 
 O envio de códigos MFA utiliza SMTP autenticado com STARTTLS configurado por variáveis de ambiente:

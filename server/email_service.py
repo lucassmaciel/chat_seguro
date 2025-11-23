@@ -88,13 +88,13 @@ class EmailService:
         ]
 
     def _build_message(self, recipient: str, code: str) -> EmailMessage:
-        subject = "Código MFA - Chat Seguro"
+        subject = "Código MFA"
         body = (
             "Olá,\n\n"
             "Segue o seu código de autenticação de dois fatores: "
             f"{code}.\n"
-            "Se você não solicitou este código, ignore este e-mail."
-            "\n\nEquipe Chat Seguro"
+            "\nSe você não solicitou este código, ignore este e-mail."
+            "\n\nEquipe Show papai"
         )
         message = EmailMessage()
         message["Subject"] = subject
