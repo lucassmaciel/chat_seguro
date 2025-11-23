@@ -4,9 +4,22 @@ import contextlib
 import json
 import logging
 import ssl
+import tempfile
 from argparse import ArgumentParser
-from pathlib import Path
-from db_core import get_conn, init_db, DEFAULT_DB_PATH
+from datetime import datetime, timedelta
+
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
+
+from db_core import (
+    DEFAULT_DB_PATH,
+    get_conn,
+    get_tls_credentials,
+    init_db,
+    store_tls_credentials,
+)
 
 # -------------------------------------------------------------------
 # Logging
@@ -23,6 +36,8 @@ PUBLIC_KEYS = {}  # client_id -> base64 pubkey
 BLOBS = {}  # recipient_id -> [ {from, blob(base64), meta} ]
 ACTIVE_CLIENTS = {}  # client_id -> {reader, writer}
 GROUPS = {}  # group_id -> { "members": [client_id], "admin": client_id }
+TLS_CERT = None
+TLS_KEY = None
 
 
 def init_pubkeys():
@@ -46,6 +61,60 @@ def init_pubkeys():
         len(PUBLIC_KEYS),
     )
     log.info("=" * 70)
+
+
+def generate_tls_credentials() -> tuple[str, str]:
+    log.info("[server.py][TLS] Gerando par RSA e certificado autoassinado")
+    private_key: rsa.RSAPrivateKey = rsa.generate_private_key(
+        public_exponent=65537, key_size=2048
+    )
+    key_bytes = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+
+    subject = issuer = x509.Name(
+        [
+            x509.NameAttribute(NameOID.COUNTRY_NAME, "BR"),
+            x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "Amazonas"),
+            x509.NameAttribute(NameOID.LOCALITY_NAME, "Manaus"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "ChatSeguro"),
+            x509.NameAttribute(NameOID.COMMON_NAME, "localhost"),
+        ]
+    )
+
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(private_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.utcnow())
+        .not_valid_after(datetime.utcnow() + timedelta(days=365))
+        .add_extension(
+            x509.SubjectAlternativeName([x509.DNSName("localhost")]),
+            critical=False,
+        )
+        .sign(private_key, hashes.SHA256())
+    )
+
+    cert_bytes = cert.public_bytes(serialization.Encoding.PEM)
+    return cert_bytes.decode(), key_bytes.decode()
+
+
+def ensure_tls_credentials(regenerate: bool = False) -> tuple[str, str]:
+    init_db(DB_PATH)
+    if not regenerate:
+        stored = get_tls_credentials(DB_PATH)
+        if stored:
+            log.info("[server.py][TLS] Certificado carregado do SQLite")
+            return stored
+
+    cert_pem, key_pem = generate_tls_credentials()
+    store_tls_credentials(cert_pem, key_pem, DB_PATH)
+    log.info("[server.py][TLS] Novo par TLS salvo em tls_credentials (SQLite)")
+    return cert_pem, key_pem
 
 
 # atualiza o json ao receber nova chave
@@ -299,16 +368,27 @@ async def handle_reader(reader, writer):
             await writer.wait_closed()
 
 
-async def main(certfile, keyfile, host="0.0.0.0", port=4433):
+def configure_ssl_context(cert_pem: str, key_pem: str) -> ssl.SSLContext:
+    sslctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    with tempfile.NamedTemporaryFile("w+b") as cert_tmp, tempfile.NamedTemporaryFile(
+        "w+b"
+    ) as key_tmp:
+        cert_tmp.write(cert_pem.encode())
+        cert_tmp.flush()
+        key_tmp.write(key_pem.encode())
+        key_tmp.flush()
+        sslctx.load_cert_chain(cert_tmp.name, key_tmp.name)
+    return sslctx
+
+
+async def main(cert_pem: str, key_pem: str, host="0.0.0.0", port=4433):
     log.info("")
     log.info("[server.py][SSL/TLS] Configurando contexto SSL/TLS")
     log.info("  └─ Arquivo: server.py | Função: main()")
-    log.info("  └─ Certificado: %s", certfile)
-    log.info("  └─ Chave privada: %s", keyfile)
+    log.info("  └─ Origem do certificado: tabela tls_credentials (SQLite)")
     log.info("  └─ Protocolo: TLS (Transport Layer Security)")
 
-    sslctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-    sslctx.load_cert_chain(certfile, keyfile)
+    sslctx = configure_ssl_context(cert_pem, key_pem)
 
     server = await asyncio.start_server(handle_reader, host, port, ssl=sslctx)
     addrs = ", ".join(str(sock.getsockname()) for sock in server.sockets)
@@ -328,14 +408,18 @@ async def main(certfile, keyfile, host="0.0.0.0", port=4433):
 
 
 if __name__ == "__main__":
-    init_pubkeys()
     p = ArgumentParser()
-    p.add_argument("certfile")
-    p.add_argument("keyfile")
     p.add_argument("--host", default="0.0.0.0")
     p.add_argument("--port", default=4433, type=int)
+    p.add_argument(
+        "--regen-tls",
+        action="store_true",
+        help="gera e substitui o certificado/chave armazenados no SQLite",
+    )
     args = p.parse_args()
     try:
-        asyncio.run(main(args.certfile, args.keyfile, args.host, args.port))
+        TLS_CERT, TLS_KEY = ensure_tls_credentials(regenerate=args.regen_tls)
+        init_pubkeys()
+        asyncio.run(main(TLS_CERT, TLS_KEY, args.host, args.port))
     except KeyboardInterrupt:
         log.info("\n[server.py] Servidor encerrado pelo usuário")

@@ -6,7 +6,7 @@ Sistema de chat seguro com criptografia end-to-end usando ECDH (X25519) + Salsa2
 
 - Python 3.12+
 - Node.js 18+ e npm
-- Certificado TLS (gerado automaticamente)
+- Certificado TLS (gerado automaticamente e armazenado no SQLite)
 
 ## 🚀 Instalação e Execução
 
@@ -23,21 +23,26 @@ uv sync
 3. Escolha **Registrar** e informe e-mail, senha forte e ID público do chat
 4. Faça login: o código MFA chega imediatamente na caixa de entrada (cheque também o spam/lixo eletrônico), expira em 5 minutos e pode ser reenviado pela própria tela de login se não aparecer ou se tiver expirado
 
-### 3. Gerar Certificados TLS
+### 3. TLS automático (sem arquivos `.pem`)
+
+- No **primeiro boot** o `server/server.py` gera um par RSA 2048 + certificado
+  autoassinado para `localhost` e salva ambos em `chatseguro.db` na tabela
+  `tls_credentials`.
+- Para **rotacionar** o par, use a flag opcional abaixo antes de subir o
+  servidor:
 
 ```bash
-python server/generate_cert.py
+python server/server.py --regen-tls
 ```
-
-Isso criará `cert.pem` e `key.pem` na raiz do projeto.
 
 ### 4. Iniciar o Servidor TLS Principal
 
 ```bash
-python server/server.py cert.pem key.pem
+python server/server.py
 ```
 
-O servidor estará rodando na porta **4433**.
+O servidor estará rodando na porta **4433** e carregará o certificado diretamente
+do banco SQLite, sem exigir arquivos locais.
 
 ### 5. Iniciar o Servidor Bridge (HTTP/WebSocket)
 
@@ -173,13 +178,17 @@ Chat-Seguran-a/
 
 ### Erro de certificado
 
-- Certifique-se de que `cert.pem` existe na raiz do projeto
-- Execute `python server/generate_cert.py` novamente se necessário
+- Use `python server/server.py --regen-tls` para gerar um novo par e gravá-lo na
+  tabela `tls_credentials` do `chatseguro.db`
+- Certifique-se de que o processo tem permissão de escrita no arquivo
+  `chatseguro.db`
 
 ## 📝 Notas
 
-- As chaves privadas são armazenadas localmente em `{client_id}_key.pem`
-- As chaves públicas são armazenadas no servidor em `pubkeys.json`
+- As chaves públicas dos clientes são armazenadas no servidor em
+  `chatseguro.db` (tabela `public_keys`)
+- O certificado e a chave privada TLS do servidor ficam em
+  `chatseguro.db` (tabela `tls_credentials`)
 - O servidor nunca descriptografa as mensagens (apenas transporta)
 - Cada cliente descriptografa suas próprias mensagens
 
