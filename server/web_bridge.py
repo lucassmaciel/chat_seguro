@@ -261,9 +261,25 @@ async def _establish_session(client_id: str) -> dict:
     logic.on_new_message = on_new_message
     logic.on_update_ui = on_update_ui
 
-    success = await logic.publish_key()
-    if not success:
-        raise HTTPException(status_code=500, detail="Falha ao publicar chave")
+    try:
+        publish_response = await logic.publish_key()
+    except Exception as exc:  # noqa: BLE001
+        log.error("Erro ao publicar chave para %s: %s", client_id, exc)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Não foi possível se conectar ao servidor TLS. "
+                "Verifique se ele está em execução."
+            ),
+        ) from exc
+
+    if publish_response.get("status") != "ok":
+        reason = publish_response.get("reason") or "Falha ao publicar chave"
+        log.error("Publicação de chave falhou para %s: %s", client_id, reason)
+        raise HTTPException(
+            status_code=503,
+            detail=f"Falha ao conectar ao servidor TLS: {reason}",
+        )
 
     active_sessions[client_id] = logic
     websocket_connections[client_id] = set()
