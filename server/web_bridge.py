@@ -2,6 +2,10 @@
 Servidor HTTP/WebSocket bridge para interface React.
 Faz proxy entre o React e o servidor TLS existente.
 Suporta múltiplos clientes simultâneos.
+
+Este bridge foi projetado exclusivamente para uso local em loopback, com
+CORS totalmente liberado e validação TLS baseada apenas nos certificados
+locais gerados na raiz do projeto.
 """
 
 import asyncio
@@ -38,12 +42,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
 ENV_MODE = getenv("ENV", "development").lower()
-TLS_SERVER_NAME = getenv("TLS_SERVER_NAME")
-TLS_INSECURE_SKIP_VERIFY = getenv("TLS_INSECURE_SKIP_VERIFY", "false").lower() in {
-    "1",
-    "true",
-    "yes",
-}
 
 
 def _parse_int_env(var_name: str, default: int) -> int:
@@ -85,10 +83,10 @@ metrics: dict[str, int] = {
     "ws_messages_sent": 0,
 }
 
-# Configuração do servidor TLS
-SERVER_HOST = getenv("TLS_HOST", "127.0.0.1")
+# Configuração do servidor TLS (uso apenas local/loopback)
+SERVER_HOST = "127.0.0.1"
 SERVER_PORT = _parse_int_env("TLS_PORT", 4433)
-CACERT = getenv("TLS_CACERT", "cert.pem")
+CACERT = PROJECT_ROOT / "cert.pem"
 
 user_store = UserStore(DEFAULT_DB_PATH)
 
@@ -242,15 +240,9 @@ async def _establish_session(client_id: str) -> dict:
     if publish_response.get("status") != "ok":
         reason = publish_response.get("reason") or "Falha ao publicar chave"
         log.error("Publicação de chave falhou para %s: %s", client_id, reason)
-        tls_hint = ""
-        if "CERTIFICATE_VERIFY_FAILED" in reason:
-            tls_hint = (
-                " (verifique o nome do certificado com TLS_SERVER_NAME ou use "
-                "TLS_INSECURE_SKIP_VERIFY em ambiente local)"
-            )
         raise HTTPException(
             status_code=503,
-            detail=f"Falha ao conectar ao servidor TLS: {reason}{tls_hint}",
+            detail=f"Falha ao conectar ao servidor TLS: {reason}",
         )
 
     metrics["tls_handshakes"] += 1
