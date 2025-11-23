@@ -56,104 +56,18 @@ def _parse_int_env(var_name: str, default: int) -> int:
         raise RuntimeError(f"{var_name} deve ser um inteiro válido") from exc
 
 
-def _normalize_origin(origin: str) -> str:
-    return origin.rstrip("/")
-
-
-def _load_allowed_origins(env_mode: str) -> list[str]:
-    """Carrega origens autorizadas a partir de env ou arquivo."""
-    raw_env = getenv("ALLOWED_ORIGINS")
-    config_path = Path(getenv("ALLOWED_ORIGINS_FILE", "allowed_origins.json"))
-    origins: list[str] = []
-
-    if raw_env:
-        origins = [_normalize_origin(origin.strip()) for origin in raw_env.split(",") if origin.strip()]
-    elif config_path.exists():
-        try:
-            data = json.loads(config_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(
-                "O arquivo de origens permitidas deve conter uma lista JSON válida",
-            ) from exc
-
-        if not isinstance(data, list):
-            raise RuntimeError(
-                "O arquivo de origens permitidas deve ser uma lista JSON de strings",
-            )
-
-        origins = [_normalize_origin(str(origin).strip()) for origin in data if str(origin).strip()]
-
-    # Remover duplicados preservando a ordem para logs mais limpos
-    seen: set[str] = set()
-    unique_origins: list[str] = []
-    for origin in origins:
-        normalized_origin = _normalize_origin(origin)
-        if normalized_origin and normalized_origin not in seen:
-            unique_origins.append(normalized_origin)
-            seen.add(normalized_origin)
-    origins = unique_origins
-
-    if origins:
-        log.info(
-            "CORS restrito (%s): %s",
-            env_mode,
-            ", ".join(origins),
-        )
-    else:
-        log.warning(
-            "Nenhuma origem configurada. O CORS ficará aberto para qualquer origem no"
-            " modo %s.",
-            env_mode,
-        )
-
-    return origins
-
-
-ALLOWED_ORIGINS = _load_allowed_origins(ENV_MODE)
-ALLOWED_ORIGINS_SET = set(ALLOWED_ORIGINS)
-
 app = FastAPI(title="Chat Seguro Web Bridge")
 
 
-def _is_origin_allowed(origin: str | None) -> bool:
-    if not ALLOWED_ORIGINS_SET:
-        return True
-    if not origin:
-        return False
-    return _normalize_origin(origin) in ALLOWED_ORIGINS_SET
-
-
 # CORS para permitir conexões do React
-cors_kwargs = {
-    "allow_credentials": True,
-    "allow_methods": ["*"],
-    "allow_headers": ["*"],
-}
-
-if ALLOWED_ORIGINS:
-    cors_kwargs["allow_origins"] = ALLOWED_ORIGINS
-else:
-    cors_kwargs["allow_origin_regex"] = ".*"
-
-app.add_middleware(CORSMiddleware, **cors_kwargs)
-
-
-@app.middleware("http")
-async def enforce_allowed_origins(request: Request, call_next):
-    if not ALLOWED_ORIGINS_SET:
-        return await call_next(request)
-
-    origin = request.headers.get("origin")
-    if not _is_origin_allowed(origin):
-        log.warning("Origem HTTP não autorizada: %s", origin)
-        return JSONResponse(
-            status_code=403,
-            content={
-                "status": "error",
-                "message": "Origem não autorizada para este servidor",
-            },
-        )
-    return await call_next(request)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[],
+    allow_origin_regex=".*",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/api/health")
@@ -572,12 +486,6 @@ async def create_group(payload: CreateGroupRequest, request: Request):
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
     """WebSocket para notificações em tempo real - suporta múltiplas conexões por cliente"""
-    origin = websocket.headers.get("origin")
-    if not _is_origin_allowed(origin):
-        log.warning("Origem WebSocket não autorizada: %s", origin)
-        await websocket.close(code=1008)
-        return
-
     await websocket.accept()
 
     if client_id not in websocket_connections:

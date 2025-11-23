@@ -86,24 +86,9 @@ Com essas variáveis presentes, os códigos MFA serão enviados diretamente para
 
 ### Configurar domínios autorizados (CORS)
 
-Por padrão o CORS está **aberto** para qualquer origem (HTTP ou WebSocket), facilitando o uso em ambientes universitários ou testes rápidos. Caso queira restringir:
+Para facilitar o uso acadêmico/local, o `server/web_bridge.py` está configurado para aceitar **qualquer origem** tanto em HTTP quanto em WebSocket. Não é necessário definir `ALLOWED_ORIGINS` ou arquivos auxiliares para iniciar o servidor e testar o MFA com envios reais de e-mail.
 
-- Defina a variável de ambiente `ALLOWED_ORIGINS` com valores separados por vírgula, por exemplo:
-
-  ```bash
-  ALLOWED_ORIGINS="https://app.exemplo.com,https://chat.exemplo.com" python server/web_bridge.py
-  ```
-
-- Ou crie um arquivo `allowed_origins.json` na raiz contendo uma lista JSON:
-
-  ```json
-  [
-    "https://app.exemplo.com",
-    "https://chat.exemplo.com"
-  ]
-  ```
-
-Se alguma origem estiver configurada, apenas os domínios informados serão aceitos; caso contrário, qualquer origem será permitida. Use a variável `ALLOWED_ORIGINS_FILE` caso queira apontar para outro caminho de arquivo.
+Caso pretenda expor o serviço publicamente no futuro, ajuste o middleware de CORS no `web_bridge` para restringir os domínios permitidos.
 
 ### 6. Iniciar a Interface Web React
 
