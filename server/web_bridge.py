@@ -16,6 +16,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from dotenv import load_dotenv
 from pydantic import BaseModel, EmailStr
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -32,6 +33,9 @@ from server.db_core import DEFAULT_DB_PATH
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("web_bridge")
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(PROJECT_ROOT / ".env")
 
 DEFAULT_DEV_ORIGIN = "http://localhost:3000"
 ENV_MODE = getenv("ENV", "development").lower()
