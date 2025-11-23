@@ -38,6 +38,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
 ENV_MODE = getenv("ENV", "development").lower()
+TLS_SERVER_NAME = getenv("TLS_SERVER_NAME")
+TLS_INSECURE_SKIP_VERIFY = getenv("TLS_INSECURE_SKIP_VERIFY", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+}
 
 
 def _parse_int_env(var_name: str, default: int) -> int:
@@ -250,7 +256,14 @@ async def _establish_session(client_id: str) -> dict:
     if client_id in active_sessions:
         return {"client_id": client_id, "session_active": True}
 
-    logic = ChatLogic(SERVER_HOST, SERVER_PORT, CACERT, client_id)
+    logic = ChatLogic(
+        SERVER_HOST,
+        SERVER_PORT,
+        CACERT,
+        client_id,
+        server_name=TLS_SERVER_NAME,
+        insecure_skip_verify=TLS_INSECURE_SKIP_VERIFY,
+    )
 
     def on_new_message(peer, message):
         notify_websockets(client_id, "new_message", {"peer": peer, "message": message})
@@ -276,9 +289,15 @@ async def _establish_session(client_id: str) -> dict:
     if publish_response.get("status") != "ok":
         reason = publish_response.get("reason") or "Falha ao publicar chave"
         log.error("Publicação de chave falhou para %s: %s", client_id, reason)
+        tls_hint = ""
+        if "CERTIFICATE_VERIFY_FAILED" in reason:
+            tls_hint = (
+                " (verifique o nome do certificado com TLS_SERVER_NAME ou use "
+                "TLS_INSECURE_SKIP_VERIFY em ambiente local)"
+            )
         raise HTTPException(
             status_code=503,
-            detail=f"Falha ao conectar ao servidor TLS: {reason}",
+            detail=f"Falha ao conectar ao servidor TLS: {reason}{tls_hint}",
         )
 
     active_sessions[client_id] = logic

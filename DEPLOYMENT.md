@@ -10,6 +10,8 @@ Este guia resume como preparar o projeto para produção, com foco em confidenci
   - `ENV=production`
   - `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USER`, `EMAIL_PASSWORD`, `EMAIL_FROM`
   - Opcional: `ALLOWED_ORIGINS` ou arquivo `allowed_origins.json` caso deseje restringir domínios
+  - Opcional: `TLS_SERVER_NAME=localhost` quando o certificado não usa o IP direto
+  - Opcional: `TLS_INSECURE_SKIP_VERIFY=true` apenas para testes locais sem verificação de hostname
 
 ## 2. Testes antes do deploy
 Execute a suíte completa de testes para validar funcionalidade e pilares de segurança:
