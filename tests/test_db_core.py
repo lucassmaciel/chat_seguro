@@ -17,7 +17,9 @@ def test_init_db_creates_schema_and_wal(tmp_path):
         }
         journal_mode = conn.execute("PRAGMA journal_mode;").fetchone()[0].lower()
 
-    assert {"users", "public_keys"}.issubset(names)
+    assert {"users", "public_keys", "groups", "group_members", "messages"}.issubset(
+        names
+    )
     assert journal_mode == "wal"
 
 
