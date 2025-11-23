@@ -1,16 +1,12 @@
 // Configuração da API - pode ser sobrescrita por variáveis de ambiente
-// Por padrão, usa URLs relativas para aproveitar o proxy do Vite
-// Se VITE_API_PORT ou VITE_API_HOST estiverem definidos, usa URLs absolutas
-const API_PORT = import.meta.env.VITE_API_PORT
-const API_HOST = import.meta.env.VITE_API_HOST
+// Em cenários multiporta (ex.: front em 3000/3001 e API em 8000),
+// usamos valores explícitos para evitar depender do proxy do Vite.
+const API_HOST = import.meta.env.VITE_API_HOST || window.location.hostname || 'localhost'
+const API_PORT = import.meta.env.VITE_API_PORT || '8000'
 
-// Se as variáveis de ambiente estiverem definidas, usa URLs absolutas
-// Caso contrário, usa URLs relativas (proxy do Vite)
-export const API_BASE_URL = API_HOST || API_PORT 
-  ? `http://${API_HOST || 'localhost'}:${API_PORT || '8000'}`
-  : '' // URL relativa - será resolvida pelo proxy
+const HTTP_PROTOCOL = window.location.protocol === 'https:' ? 'https' : 'http'
+const WS_PROTOCOL = HTTP_PROTOCOL === 'https' ? 'wss' : 'ws'
 
-export const WS_BASE_URL = API_HOST || API_PORT
-  ? `ws://${API_HOST || 'localhost'}:${API_PORT || '8000'}`
-  : (window.location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + window.location.host
+export const API_BASE_URL = `${HTTP_PROTOCOL}://${API_HOST}:${API_PORT}`
+export const WS_BASE_URL = `${WS_PROTOCOL}://${API_HOST}:${API_PORT}`
 

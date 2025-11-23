@@ -100,6 +100,21 @@ npm run dev
 
 A interface web estará disponível em `http://localhost:3000`.
 
+#### Configurar host/porta da API no frontend
+
+O frontend usa URLs explícitas para falar com o bridge em `http://<host>:<porta>`.
+Para cenários multiporta (por exemplo, dois `npm run dev` em `3000` e `3001`),
+defina as variáveis abaixo em um arquivo `web-app/.env` ou direto no terminal
+antes de iniciar o Vite:
+
+```bash
+VITE_API_HOST=localhost
+VITE_API_PORT=8000
+```
+
+Isso garante que ambos os navegadores (independentemente da porta onde o Vite
+está rodando) se conectem ao mesmo bridge HTTP/WebSocket em `8000`.
+
 ## 🎯 Como Usar
 
 1. **Acesse a interface web** em `http://localhost:3000`
@@ -120,6 +135,20 @@ A interface web estará disponível em `http://localhost:3000`.
 cd web-app
 .\start-clients.ps1
 ```
+
+## ✅ Verificação manual de entrega entre dois clientes locais
+
+1. Inicie o servidor TLS principal em um terminal: `python server/server.py cert.pem key.pem`.
+2. Inicie o bridge HTTP/WebSocket em outro terminal: `python server/web_bridge.py`.
+3. Em dois terminais separados, execute o frontend em portas distintas, apontando
+   para o mesmo bridge (ex.: `VITE_API_HOST=localhost VITE_API_PORT=8000 npm run dev -- --port 3000`
+   e `VITE_API_HOST=localhost VITE_API_PORT=8000 npm run dev -- --port 3001`).
+4. Abra `http://localhost:3000` e `http://localhost:3001`, registre/logue dois
+   usuários diferentes e conclua o MFA.
+5. Envie uma mensagem de um usuário para o outro e verifique se a entrega ocorre
+   em tempo real em ambas as janelas.
+6. Acesse `http://localhost:8000/api/status` para conferir quantas sessões e
+   conexões WebSocket estão abertas por cliente.
 
 ## 🔐 Segurança
 
