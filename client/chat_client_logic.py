@@ -205,14 +205,13 @@ class ChatLogic:
         return priv, pub
 
     async def publish_key(self):
-        resp = await self.client.send_recv(
+        return await self.client.send_recv(
             {
                 "type": "publish_key",
                 "client_id": self.client_id,
                 "pubkey": b64(self.pub),
             }
         )
-        return resp.get("status") == "ok"
 
     async def list_all(self):
         resp = await self.client.send_recv(
