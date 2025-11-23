@@ -9,7 +9,6 @@ Este guia resume como preparar o projeto para produção, com foco em confidenci
 - Variáveis de ambiente configuradas:
   - `ENV=production`
   - `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USER`, `EMAIL_PASSWORD`, `EMAIL_FROM`
-  - `ALLOWED_ORIGINS` ou arquivo `allowed_origins.json` com domínios autorizados
 
 ## 2. Testes antes do deploy
 Execute a suíte completa de testes para validar funcionalidade e pilares de segurança:
@@ -18,7 +17,7 @@ Execute a suíte completa de testes para validar funcionalidade e pilares de seg
 python -m pytest
 ```
 
-Os testes verificam persistência, armazenamento seguro de usuários, políticas de CORS, emissão de tokens de sessão e logs de MFA sem envio real de e-mails.
+Os testes verificam persistência, armazenamento seguro de usuários, CORS liberado por padrão, emissão de tokens de sessão e logs de MFA sem envio real de e-mails.
 
 ## 3. Deploy no Railway (Nixpacks)
 
@@ -27,7 +26,6 @@ Os testes verificam persistência, armazenamento seguro de usuários, políticas
   - `ENV=production`
   - `PORT=8000` (ou deixe o padrão do Railway)
   - `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USER`, `EMAIL_PASSWORD`, `EMAIL_FROM`
-  - `ALLOWED_ORIGINS` (domínios front-end separados por vírgula)
   - Opcional: `TLS_HOST=127.0.0.1`, `TLS_PORT=4433`, `TLS_CERT_FILE`/`TLS_KEY_FILE` se você enviar certificados próprios
 - O Railway expõe apenas a porta `$PORT`; o servidor TLS fica interno no container, consumido pelo bridge via loopback.
 - Logs e health check ficam disponíveis diretamente no painel do Railway (`/api/health`).
@@ -49,7 +47,6 @@ Os testes verificam persistência, armazenamento seguro de usuários, políticas
      -e EMAIL_USER=usuario \
      -e EMAIL_PASSWORD=senha \
      -e EMAIL_FROM=no-reply@seudominio.com \
-     -e ALLOWED_ORIGINS="https://seudominio.com" \
      -v /var/lib/chat-seguro:/data \
      -p 4433:4433 -p 8000:8000 \
      chat-seguro
@@ -68,7 +65,7 @@ Os testes verificam persistência, armazenamento seguro de usuários, políticas
    ```
 
 ## 5. Checklist de segurança
-- **Confidencialidade**: TLS ativo (certificados válidos), CORS restrito, chaves privadas protegidas por permissões de arquivo/segredos.
+- **Confidencialidade**: TLS ativo (certificados válidos), CORS liberado por padrão (restrinja se for expor publicamente), chaves privadas protegidas por permissões de arquivo/segredos.
 - **Integridade**: Banco SQLite em modo WAL, PBKDF2 para senhas, MACs fornecidos pelas caixas criptográficas NaCl.
 - **Disponibilidade**: Use restart policies (`--restart unless-stopped` no Docker), monitore `/api/status`, e configure backups do banco.
 - **Autenticidade**: MFA por e-mail, tokens de sessão de alta entropia e certificados TLS assinados por autoridade confiável.

@@ -37,7 +37,6 @@ log = logging.getLogger("web_bridge")
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
-DEFAULT_DEV_ORIGIN = "http://localhost:3000"
 ENV_MODE = getenv("ENV", "development").lower()
 
 
@@ -51,102 +50,18 @@ def _parse_int_env(var_name: str, default: int) -> int:
         raise RuntimeError(f"{var_name} deve ser um inteiro válido") from exc
 
 
-def _normalize_origin(origin: str) -> str:
-    return origin.rstrip("/")
-
-
-def _load_allowed_origins(env_mode: str) -> list[str]:
-    """Carrega origens autorizadas a partir de env ou arquivo."""
-    raw_env = getenv("ALLOWED_ORIGINS")
-    config_path = Path(getenv("ALLOWED_ORIGINS_FILE", "allowed_origins.json"))
-    origins: list[str] = []
-
-    if raw_env:
-        origins = [_normalize_origin(origin.strip()) for origin in raw_env.split(",") if origin.strip()]
-    elif config_path.exists():
-        try:
-            data = json.loads(config_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(
-                "O arquivo de origens permitidas deve conter uma lista JSON válida",
-            ) from exc
-
-        if not isinstance(data, list):
-            raise RuntimeError(
-                "O arquivo de origens permitidas deve ser uma lista JSON de strings",
-            )
-
-        origins = [_normalize_origin(str(origin).strip()) for origin in data if str(origin).strip()]
-
-    if env_mode == "production" and not origins:
-        raise RuntimeError(
-            "Configure ALLOWED_ORIGINS (ou um arquivo allowed_origins.json) com os domínios"
-            " autorizados antes de iniciar em produção.",
-        )
-
-    if env_mode != "production" and DEFAULT_DEV_ORIGIN not in origins:
-        origins.append(DEFAULT_DEV_ORIGIN)
-
-    # Remover duplicados preservando a ordem para logs mais limpos
-    seen: set[str] = set()
-    unique_origins: list[str] = []
-    for origin in origins:
-        normalized_origin = _normalize_origin(origin)
-        if normalized_origin and normalized_origin not in seen:
-            unique_origins.append(normalized_origin)
-            seen.add(normalized_origin)
-    origins = unique_origins
-
-    if not origins:
-        log.warning(
-            "Nenhuma origem configurada. O servidor aceitará apenas requisições sem"
-            " cabeçalho Origin.",
-        )
-    else:
-        log.info(
-            "CORS ativo (%s): %s",
-            env_mode,
-            ", ".join(origins),
-        )
-
-    return origins
-
-
-ALLOWED_ORIGINS = _load_allowed_origins(ENV_MODE)
-ALLOWED_ORIGINS_SET = set(ALLOWED_ORIGINS)
-
 app = FastAPI(title="Chat Seguro Web Bridge")
-
-
-def _is_origin_allowed(origin: str | None) -> bool:
-    if not origin:
-        return ENV_MODE != "production"
-    return _normalize_origin(origin) in ALLOWED_ORIGINS_SET
 
 
 # CORS para permitir conexões do React
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=[],
+    allow_origin_regex=".*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.middleware("http")
-async def enforce_allowed_origins(request: Request, call_next):
-    origin = request.headers.get("origin")
-    if not _is_origin_allowed(origin):
-        log.warning("Origem HTTP não autorizada: %s", origin)
-        return JSONResponse(
-            status_code=403,
-            content={
-                "status": "error",
-                "message": "Origem não autorizada para este servidor",
-            },
-        )
-    return await call_next(request)
 
 
 @app.get("/api/health")
@@ -536,12 +451,6 @@ async def create_group(payload: CreateGroupRequest, request: Request):
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
     """WebSocket para notificações em tempo real - suporta múltiplas conexões por cliente"""
-    origin = websocket.headers.get("origin")
-    if not _is_origin_allowed(origin):
-        log.warning("Origem WebSocket não autorizada: %s", origin)
-        await websocket.close(code=1008)
-        return
-
     await websocket.accept()
 
     if client_id not in websocket_connections:
