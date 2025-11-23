@@ -3,6 +3,7 @@ import builtins
 import contextlib
 import json
 import logging
+import os
 import ssl
 import tempfile
 from argparse import ArgumentParser
@@ -472,14 +473,20 @@ async def handle_reader(reader, writer):
 
 def configure_ssl_context(cert_pem: str, key_pem: str) -> ssl.SSLContext:
     sslctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-    with tempfile.NamedTemporaryFile("w+b") as cert_tmp, tempfile.NamedTemporaryFile(
-        "w+b"
-    ) as key_tmp:
-        cert_tmp.write(cert_pem.encode())
-        cert_tmp.flush()
-        key_tmp.write(key_pem.encode())
-        key_tmp.flush()
-        sslctx.load_cert_chain(cert_tmp.name, key_tmp.name)
+    cert_fd, cert_path = tempfile.mkstemp()
+    key_fd, key_path = tempfile.mkstemp()
+
+    try:
+        with os.fdopen(cert_fd, "w") as cert_tmp, os.fdopen(key_fd, "w") as key_tmp:
+            cert_tmp.write(cert_pem)
+            cert_tmp.flush()
+            key_tmp.write(key_pem)
+            key_tmp.flush()
+        sslctx.load_cert_chain(cert_path, key_path)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(cert_path)
+            os.remove(key_path)
     return sslctx
 
 
