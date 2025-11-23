@@ -36,30 +36,11 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
-            CREATE TABLE IF NOT EXISTS groups (
-                group_id TEXT PRIMARY KEY,
-                admin TEXT NOT NULL,
+            CREATE TABLE IF NOT EXISTS tls_credentials (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                cert_pem TEXT NOT NULL,
+                key_pem TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS group_members (
-                group_id TEXT NOT NULL,
-                client_id TEXT NOT NULL,
-                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (group_id, client_id),
-                FOREIGN KEY (group_id) REFERENCES groups(group_id) ON DELETE CASCADE
-            );
-
-            CREATE TABLE IF NOT EXISTS messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                recipient_id TEXT NOT NULL,
-                sender_id TEXT NOT NULL,
-                blob_b64 TEXT NOT NULL,
-                meta_json TEXT DEFAULT '{}',
-                group_id TEXT,
-                msg_type TEXT NOT NULL DEFAULT 'private',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (group_id) REFERENCES groups(group_id) ON DELETE SET NULL
             );
             """
         )
@@ -78,3 +59,33 @@ def get_conn(db_path: str | Path = DEFAULT_DB_PATH) -> Iterator[sqlite3.Connecti
         conn.commit()
     finally:
         conn.close()
+
+
+def get_tls_credentials(db_path: str | Path = DEFAULT_DB_PATH) -> tuple[str, str] | None:
+    with get_conn(db_path) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT cert_pem, key_pem FROM tls_credentials WHERE id = 1",
+        )
+        row = cur.fetchone()
+        if row:
+            return row["cert_pem"], row["key_pem"]
+        return None
+
+
+def store_tls_credentials(
+    cert_pem: str, key_pem: str, db_path: str | Path = DEFAULT_DB_PATH
+) -> None:
+    with get_conn(db_path) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO tls_credentials (id, cert_pem, key_pem)
+            VALUES (1, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                cert_pem = excluded.cert_pem,
+                key_pem = excluded.key_pem,
+                created_at = CURRENT_TIMESTAMP
+            """,
+            (cert_pem, key_pem),
+        )
