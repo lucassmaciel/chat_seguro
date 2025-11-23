@@ -57,37 +57,6 @@ O servidor bridge estará rodando na porta **8000**.
 Este bridge é exclusivo para ambiente local. Ele sempre se conecta ao servidor TLS via `127.0.0.1:4433`, usando o certificado
 `cert.pem` gerado na raiz do projeto. Não há mais variáveis de ambiente para alterar verificação de hostname ou certificados.
 
-#### Variáveis de e-mail obrigatórias
-
-O envio de códigos MFA utiliza SMTP autenticado com STARTTLS configurado por variáveis de ambiente:
-
-| Variável         | Descrição                                               |
-| ---------------- | ------------------------------------------------------- |
-| `EMAIL_HOST`     | Hostname ou IP do servidor SMTP                         |
-| `EMAIL_PORT`     | Porta TCP do servidor SMTP (ex.: `587`)                 |
-| `EMAIL_USER`     | Usuário da conta de e-mail utilizada no envio           |
-| `EMAIL_PASSWORD` | Senha ou token de app do usuário configurado            |
-| `EMAIL_FROM`     | Endereço completo exibido como remetente do código MFA  |
-
-Em `ENV=development`, o código MFA é registrado no log (`mfa_emails.log`) **somente se** as variáveis acima estiverem ausentes. Quando você fornece todos os valores SMTP no `.env`, o envio real é efetuado mesmo em desenvolvimento.
-
-Você pode centralizar essa configuração em um arquivo `.env` na raiz do projeto. O `server/web_bridge.py` carrega esse arquivo automaticamente no startup, permitindo definir, por exemplo:
-
-```env
-ENV=development
-EMAIL_HOST=smtp.seuprovedor.com
-EMAIL_PORT=587
-EMAIL_USER=usuario@dominio.com
-EMAIL_PASSWORD=senha-ou-token
-EMAIL_FROM=Chat Seguro <no-reply@dominio.com>
-```
-
-Com essas variáveis presentes, os códigos MFA serão enviados diretamente para o e-mail informado no login.
-
-### Configurar domínios autorizados (CORS)
-
-Para facilitar o uso acadêmico/local, o `server/web_bridge.py` está configurado para aceitar **qualquer origem** tanto em HTTP quanto em WebSocket. Não é necessário definir `ALLOWED_ORIGINS` ou arquivos auxiliares para iniciar o servidor e testar o MFA com envios reais de e-mail. Ajustes de CORS ou endurecimento adicionais para produção não estão cobertos aqui.
-
 ### 6. Iniciar a Interface Web React
 
 Em um novo terminal:
