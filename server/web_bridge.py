@@ -16,6 +16,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from dotenv import load_dotenv
 from pydantic import BaseModel, EmailStr
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -33,6 +34,9 @@ from server.db_core import DEFAULT_DB_PATH
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("web_bridge")
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(PROJECT_ROOT / ".env")
+
 DEFAULT_DEV_ORIGIN = "http://localhost:3000"
 ENV_MODE = getenv("ENV", "development").lower()
 
@@ -47,6 +51,10 @@ def _parse_int_env(var_name: str, default: int) -> int:
         raise RuntimeError(f"{var_name} deve ser um inteiro válido") from exc
 
 
+def _normalize_origin(origin: str) -> str:
+    return origin.rstrip("/")
+
+
 def _load_allowed_origins(env_mode: str) -> list[str]:
     """Carrega origens autorizadas a partir de env ou arquivo."""
     raw_env = getenv("ALLOWED_ORIGINS")
@@ -54,7 +62,7 @@ def _load_allowed_origins(env_mode: str) -> list[str]:
     origins: list[str] = []
 
     if raw_env:
-        origins = [origin.strip() for origin in raw_env.split(",") if origin.strip()]
+        origins = [_normalize_origin(origin.strip()) for origin in raw_env.split(",") if origin.strip()]
     elif config_path.exists():
         try:
             data = json.loads(config_path.read_text(encoding="utf-8"))
@@ -68,7 +76,7 @@ def _load_allowed_origins(env_mode: str) -> list[str]:
                 "O arquivo de origens permitidas deve ser uma lista JSON de strings",
             )
 
-        origins = [str(origin).strip() for origin in data if str(origin).strip()]
+        origins = [_normalize_origin(str(origin).strip()) for origin in data if str(origin).strip()]
 
     if env_mode == "production" and not origins:
         raise RuntimeError(
@@ -83,9 +91,10 @@ def _load_allowed_origins(env_mode: str) -> list[str]:
     seen: set[str] = set()
     unique_origins: list[str] = []
     for origin in origins:
-        if origin not in seen:
-            unique_origins.append(origin)
-            seen.add(origin)
+        normalized_origin = _normalize_origin(origin)
+        if normalized_origin and normalized_origin not in seen:
+            unique_origins.append(normalized_origin)
+            seen.add(normalized_origin)
     origins = unique_origins
 
     if not origins:
@@ -112,7 +121,7 @@ app = FastAPI(title="Chat Seguro Web Bridge")
 def _is_origin_allowed(origin: str | None) -> bool:
     if not origin:
         return ENV_MODE != "production"
-    return origin in ALLOWED_ORIGINS_SET
+    return _normalize_origin(origin) in ALLOWED_ORIGINS_SET
 
 
 # CORS para permitir conexões do React

@@ -20,6 +20,46 @@ def test_dev_mode_logs_code(tmp_path, caplog):
     assert "MFA" in caplog.text
 
 
+def test_dev_mode_with_credentials_sends_smtp(monkeypatch):
+    sent_messages = []
+
+    class DummySMTP:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def starttls(self, **_kwargs):
+            return None
+
+        def login(self, *_args, **_kwargs):
+            return None
+
+        def send_message(self, message):
+            sent_messages.append(message)
+
+    monkeypatch.setattr("smtplib.SMTP", DummySMTP)
+
+    settings = SMTPSettings(
+        host="smtp.example.com",
+        port=587,
+        username="user",
+        password="pass",
+        sender="no-reply@example.com",
+    )
+    service = EmailService(settings=settings, env_mode="development")
+
+    service.send_mfa_code("dest@example.com", "654321")
+
+    assert len(sent_messages) == 1
+    assert sent_messages[0]["To"] == "dest@example.com"
+    assert "654321" in sent_messages[0].get_content()
+
+
 def test_missing_configuration_raises_in_production():
     with pytest.raises(EmailServiceError):
         EmailService(settings=SMTPSettings(), env_mode="production")

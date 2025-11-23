@@ -37,6 +37,20 @@ def test_is_origin_allowed_respects_set(monkeypatch):
     assert web_bridge._is_origin_allowed("https://blocked.com") is False
 
 
+def test_load_allowed_origins_strips_trailing_slash(monkeypatch):
+    monkeypatch.setenv("ALLOWED_ORIGINS", "http://localhost:3000/")
+
+    origins = web_bridge._load_allowed_origins("development")
+
+    assert origins == ["http://localhost:3000"]
+
+
+def test_is_origin_allowed_normalizes_trailing_slash(monkeypatch):
+    monkeypatch.setattr(web_bridge, "ALLOWED_ORIGINS_SET", {"http://localhost:3000"})
+
+    assert web_bridge._is_origin_allowed("http://localhost:3000/") is True
+
+
 def test_issue_and_require_session(monkeypatch):
     monkeypatch.setattr(web_bridge, "session_tokens", {})
     token = web_bridge._issue_session_token("client-1")
