@@ -1,6 +1,6 @@
 # Chat Seguro - Guia Completo
 
-Sistema de chat seguro com criptografia end-to-end usando ECDH (X25519) + Salsa20+Poly1305.
+Sistema de chat seguro com criptografia end-to-end usando ECDH (X25519) + Salsa20+Poly1305. Este guia cobre **apenas uso local** (dev server, bridge e frontend) e **não prepara para deployment**. O fluxo de MFA permanece igual e obrigatório.
 
 ## 📋 Pré-requisitos
 
@@ -69,12 +69,12 @@ O envio de códigos MFA utiliza SMTP autenticado com STARTTLS configurado por va
 | `EMAIL_PASSWORD` | Senha ou token de app do usuário configurado            |
 | `EMAIL_FROM`     | Endereço completo exibido como remetente do código MFA  |
 
-Em `ENV=development`, o código MFA é registrado no log (`mfa_emails.log`) **somente se** as variáveis acima estiverem ausentes. Quando você fornece todos os valores SMTP no `.env`, o envio real é efetuado mesmo em desenvolvimento. Nos demais ambientes, todas as variáveis precisam estar definidas, caso contrário o servidor não iniciará.
+Em `ENV=development`, o código MFA é registrado no log (`mfa_emails.log`) **somente se** as variáveis acima estiverem ausentes. Quando você fornece todos os valores SMTP no `.env`, o envio real é efetuado mesmo em desenvolvimento.
 
 Você pode centralizar essa configuração em um arquivo `.env` na raiz do projeto. O `server/web_bridge.py` carrega esse arquivo automaticamente no startup, permitindo definir, por exemplo:
 
 ```env
-ENV=production
+ENV=development
 EMAIL_HOST=smtp.seuprovedor.com
 EMAIL_PORT=587
 EMAIL_USER=usuario@dominio.com
@@ -86,9 +86,7 @@ Com essas variáveis presentes, os códigos MFA serão enviados diretamente para
 
 ### Configurar domínios autorizados (CORS)
 
-Para facilitar o uso acadêmico/local, o `server/web_bridge.py` está configurado para aceitar **qualquer origem** tanto em HTTP quanto em WebSocket. Não é necessário definir `ALLOWED_ORIGINS` ou arquivos auxiliares para iniciar o servidor e testar o MFA com envios reais de e-mail.
-
-Caso pretenda expor o serviço publicamente no futuro, ajuste o middleware de CORS no `web_bridge` para restringir os domínios permitidos.
+Para facilitar o uso acadêmico/local, o `server/web_bridge.py` está configurado para aceitar **qualquer origem** tanto em HTTP quanto em WebSocket. Não é necessário definir `ALLOWED_ORIGINS` ou arquivos auxiliares para iniciar o servidor e testar o MFA com envios reais de e-mail. Ajustes de CORS ou endurecimento adicionais para produção não estão cobertos aqui.
 
 ### 6. Iniciar a Interface Web React
 
