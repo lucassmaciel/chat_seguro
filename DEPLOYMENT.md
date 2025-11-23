@@ -8,8 +8,6 @@ Este guia resume como preparar o projeto para produção, com foco em confidenci
 - Certificado TLS válido (`cert.pem` e `key.pem`); para testes locais use `python server/generate_cert.py`.
 - Variáveis de ambiente configuradas:
   - `ENV=production`
-  - `TLS_HOST`/`TLS_PORT` (backend TLS interno usado pelo bridge; `127.0.0.1:4433` por padrão)
-  - `TLS_CERT_FILE`/`TLS_KEY_FILE` se quiser apontar para certificados customizados
   - `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USER`, `EMAIL_PASSWORD`, `EMAIL_FROM`
   - `ALLOWED_ORIGINS` ou arquivo `allowed_origins.json` com domínios autorizados
 
