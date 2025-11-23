@@ -61,7 +61,20 @@ O envio de códigos MFA utiliza SMTP autenticado com STARTTLS configurado por va
 | `EMAIL_PASSWORD` | Senha ou token de app do usuário configurado            |
 | `EMAIL_FROM`     | Endereço completo exibido como remetente do código MFA  |
 
-Em `ENV=development`, a aplicação não envia mensagens reais: o código MFA é registrado no log (`mfa_emails.log`). Nos demais ambientes, todas as variáveis acima precisam estar definidas, caso contrário o servidor não iniciará.
+Em `ENV=development`, o código MFA é registrado no log (`mfa_emails.log`) **somente se** as variáveis acima estiverem ausentes. Quando você fornece todos os valores SMTP no `.env`, o envio real é efetuado mesmo em desenvolvimento. Nos demais ambientes, todas as variáveis precisam estar definidas, caso contrário o servidor não iniciará.
+
+Você pode centralizar essa configuração em um arquivo `.env` na raiz do projeto. O `server/web_bridge.py` carrega esse arquivo automaticamente no startup, permitindo definir, por exemplo:
+
+```env
+ENV=production
+EMAIL_HOST=smtp.seuprovedor.com
+EMAIL_PORT=587
+EMAIL_USER=usuario@dominio.com
+EMAIL_PASSWORD=senha-ou-token
+EMAIL_FROM=Chat Seguro <no-reply@dominio.com>
+```
+
+Com essas variáveis presentes, os códigos MFA serão enviados diretamente para o e-mail informado no login.
 
 ### Configurar domínios autorizados (CORS)
 
