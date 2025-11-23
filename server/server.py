@@ -6,6 +6,7 @@ import logging
 import ssl
 from argparse import ArgumentParser
 from pathlib import Path
+from db_core import get_conn, init_db, DEFAULT_DB_PATH
 
 # -------------------------------------------------------------------
 # Logging
@@ -17,7 +18,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("chatseguro.server")
 
-PUBKEYS_FILE = Path("pubkeys.json")
+DB_PATH = DEFAULT_DB_PATH
 PUBLIC_KEYS = {}  # client_id -> base64 pubkey
 BLOBS = {}  # recipient_id -> [ {from, blob(base64), meta} ]
 ACTIVE_CLIENTS = {}  # client_id -> {reader, writer}
@@ -30,23 +31,20 @@ def init_pubkeys():
     log.info("[server.py][INIT] Inicializando servidor de chat seguro")
     log.info("  └─ Arquivo: server.py | Função: init_pubkeys()")
 
-    if PUBKEYS_FILE.exists():
-        with PUBKEYS_FILE.open("r") as f:
-            try:
-                PUBLIC_KEYS = json.load(f)
-                log.info(
-                    "  └─ ✅ pubkeys.json carregado (%d chaves públicas)",
-                    len(PUBLIC_KEYS),
-                )
-            except Exception as e:
-                log.error("  └─ ❌ Erro ao ler pubkeys.json: %s", e)
-                PUBLIC_KEYS = {}
-    else:
-        PUBLIC_KEYS = {}
-        with PUBKEYS_FILE.open("w") as f:
-            json.dump(PUBLIC_KEYS, f, indent=2)
-        log.info("  └─ ✅ pubkeys.json criado (vazio)")
+    # Garante que o schema existe
+    init_db(DB_PATH)
 
+    # Carrega chaves já existentes no banco
+    with get_conn(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT client_id, pubkey_b64 FROM public_keys")
+        rows = cur.fetchall()
+        PUBLIC_KEYS = {row["client_id"]: row["pubkey_b64"] for row in rows}
+
+    log.info(
+        "  └─ ✅ Tabela public_keys carregada (%d chaves públicas)",
+        len(PUBLIC_KEYS),
+    )
     log.info("=" * 70)
 
 
@@ -54,8 +52,19 @@ def init_pubkeys():
 def store_pubkey(client_id, pubkey_b64):
     global PUBLIC_KEYS
     PUBLIC_KEYS[client_id] = pubkey_b64
-    with PUBKEYS_FILE.open("w") as f:
-        json.dump(PUBLIC_KEYS, f, indent=2)
+
+    with get_conn(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO public_keys (client_id, pubkey_b64)
+            VALUES (?, ?)
+                ON CONFLICT(client_id) DO UPDATE SET
+                pubkey_b64 = excluded.pubkey_b64,
+                                              updated_at = CURRENT_TIMESTAMP
+            """,
+            (client_id, pubkey_b64),
+        )
 
     log.info("")
     log.info("[server.py][PUBKEY_STORE] Chave pública recebida e armazenada")
@@ -64,7 +73,7 @@ def store_pubkey(client_id, pubkey_b64):
     log.info("  └─ Tamanho da chave (base64): %d caracteres", len(pubkey_b64))
     log.info("  └─ Algoritmo: X25519 (Curve25519 para ECDH)")
     log.info("  └─ Uso: Estabelecer canal criptografado via NaCl Box")
-    log.info("  └─  Persistido em: pubkeys.json")
+    log.info("  └─ Persistido em: tabela public_keys (SQLite)")
 
 
 # --- Respostas ---

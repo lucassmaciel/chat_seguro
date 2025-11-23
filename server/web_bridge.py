@@ -28,6 +28,7 @@ from server.email_service import (
     SMTPSettings,
 )
 from server.user_store import UserStore
+from server.db_core import DEFAULT_DB_PATH
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("web_bridge")
@@ -139,7 +140,7 @@ SERVER_HOST = "localhost"
 SERVER_PORT = 4433
 CACERT = "cert.pem"
 
-user_store = UserStore("users.json")
+user_store = UserStore(DEFAULT_DB_PATH)
 
 
 def _build_email_service() -> EmailService:

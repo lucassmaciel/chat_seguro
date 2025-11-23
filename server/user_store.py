@@ -10,74 +10,110 @@ import secrets
 from pathlib import Path
 from typing import Dict, Optional
 
+from .db_core import get_conn, init_db, DEFAULT_DB_PATH
+
 
 class UserStore:
     """Persiste usuários em disco utilizando PBKDF2 + salt aleatório."""
 
     DEFAULT_ITERATIONS = 390_000
 
-    def __init__(self, path: str | Path):
-        self.path = Path(path)
-        if not self.path.exists():
-            self.path.write_text(json.dumps({}, indent=2), encoding="utf-8")
+    def __init__(self, db_path: str):
+        self.db_path = db_path
 
-    def _load(self) -> Dict[str, dict]:
-        return json.loads(self.path.read_text(encoding="utf-8"))
-
-    def _save(self, data: Dict[str, dict]) -> None:
-        self.path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-
-    def _hash_password(self, password: str, salt: bytes) -> bytes:
+    # --------- internals ---------
+    def _hash_password(self, password: str, salt: bytes, iterations: int | None = None) -> bytes:
+        it = iterations or self.DEFAULT_ITERATIONS
         return hashlib.pbkdf2_hmac(
-            "sha256", password.encode("utf-8"), salt, self.DEFAULT_ITERATIONS
+            "sha256",
+            password.encode("utf-8"),
+            salt,
+            it,
         )
 
+    # --------- API pública ---------
     def create_user(self, email: str, password: str, client_id: str) -> None:
         email = email.lower().strip()
         client_id = client_id.strip()
         if not email or not password or not client_id:
             raise ValueError("Dados obrigatórios ausentes")
 
-        data = self._load()
+        with get_conn(self.db_path) as conn:
+            cur = conn.cursor()
 
-        if email in data:
-            raise ValueError("E-mail já cadastrado")
+            # e-mail único
+            cur.execute("SELECT 1 FROM users WHERE email = ?", (email,))
+            if cur.fetchone():
+                raise ValueError("E-mail já cadastrado")
 
-        if any(u.get("client_id") == client_id for u in data.values()):
-            raise ValueError("ID de cliente já em uso")
+            # client_id único
+            cur.execute("SELECT 1 FROM users WHERE client_id = ?", (client_id,))
+            if cur.fetchone():
+                raise ValueError("ID de cliente já em uso")
 
-        salt = secrets.token_bytes(16)
-        pwd_hash = self._hash_password(password, salt)
+            salt = secrets.token_bytes(16)
+            pwd_hash = self._hash_password(password, salt, self.DEFAULT_ITERATIONS)
 
-        data[email] = {
-            "client_id": client_id,
-            "salt": base64.b64encode(salt).decode(),
-            "pwd_hash": base64.b64encode(pwd_hash).decode(),
-            "iterations": self.DEFAULT_ITERATIONS,
-        }
-        self._save(data)
+            cur.execute(
+                """
+                INSERT INTO users (email, client_id, salt, pwd_hash, iterations)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    email,
+                    client_id,
+                    salt,
+                    pwd_hash,
+                    self.DEFAULT_ITERATIONS,
+                ),
+            )
 
     def verify_user(self, email: str, password: str) -> Optional[dict]:
         email = email.lower().strip()
-        data = self._load()
-        user = data.get(email)
-        if not user:
+
+        with get_conn(self.db_path) as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT email, client_id, salt, pwd_hash, iterations
+                FROM users
+                WHERE email = ?
+                """,
+                (email,),
+            )
+            row = cur.fetchone()
+
+        if not row:
             return None
 
-        salt = base64.b64decode(user["salt"].encode())
-        expected_hash = base64.b64decode(user["pwd_hash"].encode())
-        iterations = int(user.get("iterations", self.DEFAULT_ITERATIONS))
+        salt = row["salt"]
+        expected_hash = row["pwd_hash"]
+        iterations = int(row["iterations"])
 
-        pwd_hash = hashlib.pbkdf2_hmac(
-            "sha256", password.encode("utf-8"), salt, iterations
-        )
+        pwd_hash = self._hash_password(password, salt, iterations)
+
         if hmac.compare_digest(pwd_hash, expected_hash):
-            return {"email": email, "client_id": user["client_id"]}
+            return {"email": row["email"], "client_id": row["client_id"]}
         return None
 
     def get_user(self, email: str) -> Optional[dict]:
-        data = self._load()
-        return data.get(email.lower().strip())
+        email = email.lower().strip()
+        with get_conn(self.db_path) as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT email, client_id, salt, pwd_hash, iterations FROM users WHERE email = ?",
+                (email,),
+            )
+            row = cur.fetchone()
+
+        if not row:
+            return None
+
+        return {
+            "email": row["email"],
+            "client_id": row["client_id"],
+            "iterations": row["iterations"],
+        }
 
 
 __all__ = ["UserStore"]
