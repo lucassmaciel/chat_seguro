@@ -15,4 +15,10 @@ server/generate_cert.py
 server/server.py
 server/user_store.py
 server/web_bridge.py
+tests/test_db_core.py
+tests/test_email_service.py
+tests/test_persistence.py
 tests/test_persistence_manual.py
+tests/test_server_runtime.py
+tests/test_user_store.py
+tests/test_web_bridge.py
