@@ -4,8 +4,8 @@ Faz proxy entre o React e o servidor TLS existente.
 Suporta múltiplos clientes simultâneos.
 
 Este bridge foi projetado exclusivamente para uso local em loopback, com
-CORS totalmente liberado e validação TLS baseada apenas nos certificados
-locais gerados na raiz do projeto.
+CORS totalmente liberado e validação TLS simplificada (aceita o
+certificado autoassinado gerado pelo servidor a partir do SQLite).
 """
 
 import asyncio
@@ -42,6 +42,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
 ENV_MODE = getenv("ENV", "development").lower()
+TLS_SERVER_NAME: str | None = None
+TLS_INSECURE_SKIP_VERIFY = True
 
 
 def _parse_int_env(var_name: str, default: int) -> int:
@@ -86,7 +88,7 @@ metrics: dict[str, int] = {
 # Configuração do servidor TLS (uso apenas local/loopback)
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = _parse_int_env("TLS_PORT", 4433)
-CACERT = PROJECT_ROOT / "cert.pem"
+CACERT: Path | None = None
 
 user_store = UserStore(DEFAULT_DB_PATH)
 
