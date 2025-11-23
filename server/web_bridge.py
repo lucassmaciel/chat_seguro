@@ -79,6 +79,11 @@ active_sessions: dict[str, ChatLogic] = {}
 websocket_connections: dict[str, set[WebSocket]] = {}
 pending_mfa: dict[str, dict] = {}
 session_tokens: dict[str, dict] = {}
+metrics: dict[str, int] = {
+    "sessions_created": 0,
+    "tls_handshakes": 0,
+    "ws_messages_sent": 0,
+}
 
 # Configuração do servidor TLS
 SERVER_HOST = getenv("TLS_HOST", "127.0.0.1")
@@ -141,6 +146,16 @@ def notify_websockets(client_id: str, event_type: str, data: dict):
         disconnected = set()
         for ws in websocket_connections[client_id]:
             try:
+                remote_host = getattr(ws.client, "host", "unknown") if ws.client else "unknown"
+                remote_port = getattr(ws.client, "port", "unknown") if ws.client else "unknown"
+                log.info(
+                    "Enviando evento %s para %s via WebSocket (%s:%s)",
+                    event_type,
+                    client_id,
+                    remote_host,
+                    remote_port,
+                )
+                metrics["ws_messages_sent"] += 1
                 asyncio.create_task(ws.send_text(message))
             except Exception as e:
                 log.error(f"Erro ao enviar para WebSocket: {e}")
@@ -156,10 +171,26 @@ async def get_status():
             "status": "ok",
             "active_sessions": len(active_sessions),
             "clients": list(active_sessions.keys()),
+            "tls": {
+                "host": SERVER_HOST,
+                "port": SERVER_PORT,
+                "server_name": TLS_SERVER_NAME,
+                "insecure_skip_verify": TLS_INSECURE_SKIP_VERIFY,
+            },
             "websocket_connections": {
-                client_id: len(connections)
+                client_id: {
+                    "count": len(connections),
+                    "remotes": sorted(
+                        {
+                            f"{getattr(conn.client, 'host', 'unknown')}:{getattr(conn.client, 'port', 'unknown')}"
+                            for conn in connections
+                            if conn.client
+                        }
+                    ),
+                }
                 for client_id, connections in websocket_connections.items()
             },
+            "metrics": metrics,
         }
     )
 
@@ -170,6 +201,14 @@ async def _establish_session(client_id: str) -> dict:
     if client_id in active_sessions:
         return {"client_id": client_id, "session_active": True}
 
+    log.info(
+        "Criando sessão TLS para %s em %s:%s (server_name=%s, insecure_skip_verify=%s)",
+        client_id,
+        SERVER_HOST,
+        SERVER_PORT,
+        TLS_SERVER_NAME,
+        TLS_INSECURE_SKIP_VERIFY,
+    )
     logic = ChatLogic(
         SERVER_HOST,
         SERVER_PORT,
@@ -214,6 +253,10 @@ async def _establish_session(client_id: str) -> dict:
             detail=f"Falha ao conectar ao servidor TLS: {reason}{tls_hint}",
         )
 
+    metrics["tls_handshakes"] += 1
+    log.info(
+        "Handshake TLS concluído para %s em %s:%s", client_id, SERVER_HOST, SERVER_PORT
+    )
     active_sessions[client_id] = logic
     websocket_connections[client_id] = set()
     asyncio.create_task(poll_messages(client_id))
@@ -223,6 +266,7 @@ async def _establish_session(client_id: str) -> dict:
         client_id,
         len(active_sessions),
     )
+    metrics["sessions_created"] += 1
     return {"client_id": client_id, "session_active": False}
 
 
