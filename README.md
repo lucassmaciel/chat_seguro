@@ -2,6 +2,7 @@
 
 Sistema de chat seguro com criptografia end-to-end usando ECDH (X25519) + Salsa20+Poly1305.
 
+
 ## 📋 Pré-requisitos
 
 - Python 3.12+
