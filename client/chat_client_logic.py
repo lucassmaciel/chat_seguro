@@ -11,6 +11,7 @@ from nacl.public import PrivateKey, PublicKey
 from nacl.secret import SecretBox
 
 from client.persistence import load_conversations, save_conversations
+from client.key_store import load_private_key_bytes, store_private_key_bytes
 
 # =========================================
 # Utils
@@ -191,15 +192,44 @@ class ChatLogic:
         save_conversations(self.client_id, self.conversations)
 
     def load_or_create_keys(self, client_id):
-        key_file = Path(f"{client_id}_key.pem")
-        if key_file.exists():
-            print(f"Bem-vindo de volta, {client_id}! Carregando sua chave.")
-            priv_bytes = ub64(key_file.read_text())
+        """
+        Agora:
+          1) tenta carregar do keystore (SQLite + SecretBox)
+          2) se não existir, tenta do arquivo {client_id}_key.pem (migração)
+          3) se nada existir, gera nova chave, salva no keystore
+        """
+        # 1) Tenta keystore
+        try:
+            priv_bytes = load_private_key_bytes(client_id)
+        except Exception as e:
+            print(f"[WARN] Erro ao ler keystore local: {e}")
+            priv_bytes = None
+
+        if priv_bytes is not None:
+            print(f"Bem-vindo de volta, {client_id}! Carregando chave do keystore local.")
             priv = PrivateKey(priv_bytes)
         else:
-            print(f"Primeiro login de {client_id}. Gerando novo par de chaves.")
-            priv = PrivateKey.generate()
-            key_file.write_text(b64(bytes(priv)))
+            # 2) Fallback: arquivo antigo (se existir)
+            key_file = Path(f"{client_id}_key.pem")
+            if key_file.exists():
+                print(f"Bem-vindo de volta, {client_id}! Migrando chave do arquivo para o keystore.")
+                from base64 import b64decode
+
+                priv_bytes = b64decode(key_file.read_text().encode())
+                priv = PrivateKey(priv_bytes)
+                # já que deu certo, persiste no keystore
+                try:
+                    store_private_key_bytes(client_id, bytes(priv))
+                except Exception as e:
+                    print(f"[WARN] Falha ao salvar chave no keystore: {e}")
+            else:
+                # 3) Nova chave
+                print(f"Primeiro login de {client_id}. Gerando novo par de chaves.")
+                priv = PrivateKey.generate()
+                try:
+                    store_private_key_bytes(client_id, bytes(priv))
+                except Exception as e:
+                    print(f"[WARN] Falha ao salvar nova chave no keystore: {e}")
 
         pub = bytes(priv.public_key)
         return priv, pub

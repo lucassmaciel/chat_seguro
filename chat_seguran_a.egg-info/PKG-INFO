@@ -10,6 +10,7 @@ Requires-Dist: websockets>=11.0.0
 Requires-Dist: fastapi>=0.104.0
 Requires-Dist: uvicorn[standard]>=0.24.0
 Requires-Dist: email-validator>=2.0.0
+Requires-Dist: python-dotenv>=1.2.1
 
 # Chat Seguro - Guia Completo
 

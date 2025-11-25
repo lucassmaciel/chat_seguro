@@ -105,6 +105,7 @@ dependencies = [
     { name = "email-validator" },
     { name = "fastapi" },
     { name = "pynacl" },
+    { name = "python-dotenv" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "websockets" },
 ]
@@ -115,6 +116,7 @@ requires-dist = [
     { name = "email-validator", specifier = ">=2.0.0" },
     { name = "fastapi", specifier = ">=0.104.0" },
     { name = "pynacl", specifier = ">=1.6.0" },
+    { name = "python-dotenv", specifier = ">=1.2.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.24.0" },
     { name = "websockets", specifier = ">=11.0.0" },
 ]
