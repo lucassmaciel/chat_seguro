@@ -1,13 +1,13 @@
 # Chat Seguro - Guia Completo
 
-Sistema de chat seguro com criptografia end-to-end usando ECDH (X25519) + Salsa20+Poly1305.
+Sistema de chat seguro com criptografia end-to-end usando ECDH (X25519) + Salsa20+Poly1305. Este guia cobre **apenas uso local** (dev server, bridge e frontend) e **não prepara para deployment**. O fluxo de MFA permanece igual e obrigatório.
 
 
 ## 📋 Pré-requisitos
 
 - Python 3.12+
 - Node.js 18+ e npm
-- Certificado TLS (gerado automaticamente)
+- Certificado TLS (gerado automaticamente e armazenado no SQLite)
 
 ## 🚀 Instalação e Execução
 
@@ -24,21 +24,26 @@ uv sync
 3. Escolha **Registrar** e informe e-mail, senha forte e ID público do chat
 4. Faça login: o código MFA chega imediatamente na caixa de entrada (cheque também o spam/lixo eletrônico), expira em 5 minutos e pode ser reenviado pela própria tela de login se não aparecer ou se tiver expirado
 
-### 3. Gerar Certificados TLS
+### 3. TLS automático (sem arquivos `.pem`)
+
+- No **primeiro boot** o `server/server.py` gera um par RSA 2048 + certificado
+  autoassinado para `localhost` e salva ambos em `chatseguro.db` na tabela
+  `tls_credentials`.
+- Para **rotacionar** o par, use a flag opcional abaixo antes de subir o
+  servidor:
 
 ```bash
-python server/generate_cert.py
+python server/server.py --regen-tls
 ```
-
-Isso criará `cert.pem` e `key.pem` na raiz do projeto.
 
 ### 4. Iniciar o Servidor TLS Principal
 
 ```bash
-python server/server.py cert.pem key.pem
+python server/server.py
 ```
 
-O servidor estará rodando na porta **4433**.
+O servidor estará rodando na porta **4433** e carregará o certificado diretamente
+do banco SQLite, sem exigir arquivos locais.
 
 ### 5. Iniciar o Servidor Bridge (HTTP/WebSocket)
 
@@ -50,42 +55,9 @@ python server/web_bridge.py
 
 O servidor bridge estará rodando na porta **8000**.
 
-#### Variáveis de e-mail obrigatórias
-
-O envio de códigos MFA utiliza SMTP autenticado com STARTTLS configurado por variáveis de ambiente:
-
-| Variável         | Descrição                                               |
-| ---------------- | ------------------------------------------------------- |
-| `EMAIL_HOST`     | Hostname ou IP do servidor SMTP                         |
-| `EMAIL_PORT`     | Porta TCP do servidor SMTP (ex.: `587`)                 |
-| `EMAIL_USER`     | Usuário da conta de e-mail utilizada no envio           |
-| `EMAIL_PASSWORD` | Senha ou token de app do usuário configurado            |
-| `EMAIL_FROM`     | Endereço completo exibido como remetente do código MFA  |
-
-Em `ENV=development`, a aplicação não envia mensagens reais: o código MFA é registrado no log (`mfa_emails.log`). Nos demais ambientes, todas as variáveis acima precisam estar definidas, caso contrário o servidor não iniciará.
-
-### Configurar domínios autorizados (CORS)
-
-O `server/web_bridge.py` valida todas as origens (HTTP e WebSocket) usando a configuração `ALLOWED_ORIGINS`.
-
-- **Desenvolvimento**: `http://localhost:3000` é permitido automaticamente.
-- **Produção**: defina `ENV=production` e informe explicitamente os domínios front-end usando:
-  - Variável de ambiente `ALLOWED_ORIGINS` com valores separados por vírgula, por exemplo:
-
-    ```bash
-    ENV=production ALLOWED_ORIGINS="https://app.exemplo.com,https://chat.exemplo.com" python server/web_bridge.py
-    ```
-
-  - Ou um arquivo `allowed_origins.json` na raiz contendo uma lista JSON, por exemplo:
-
-    ```json
-    [
-      "https://app.exemplo.com",
-      "https://chat.exemplo.com"
-    ]
-    ```
-
-Se a lista ficar vazia em produção, o servidor falha no startup para evitar exposição indevida; já em desenvolvimento, apenas requisições sem cabeçalho `Origin` serão aceitas se nada estiver configurado. Use a variável `ALLOWED_ORIGINS_FILE` caso queira apontar para outro caminho de arquivo. Qualquer origem não listada será rejeitada pelo servidor bridge e o log de inicialização mostrará exatamente quais domínios foram habilitados.
+Este bridge é exclusivo para ambiente local. Ele sempre se conecta ao servidor TLS via `127.0.0.1:4433` e aceita o certificado
+autoassinado gerado pelo servidor diretamente do SQLite, sem exigir arquivos `cert.pem`/`key.pem` ou variáveis extras para
+hostname/CA.
 
 ### 6. Iniciar a Interface Web React
 
@@ -98,6 +70,21 @@ npm run dev
 ```
 
 A interface web estará disponível em `http://localhost:3000`.
+
+#### Configurar host/porta da API no frontend
+
+O frontend usa URLs explícitas para falar com o bridge em `http://<host>:<porta>`.
+Para cenários multiporta (por exemplo, dois `npm run dev` em `3000` e `3001`),
+defina as variáveis abaixo em um arquivo `web-app/.env` ou direto no terminal
+antes de iniciar o Vite:
+
+```bash
+VITE_API_HOST=localhost
+VITE_API_PORT=8000
+```
+
+Isso garante que ambos os navegadores (independentemente da porta onde o Vite
+está rodando) se conectem ao mesmo bridge HTTP/WebSocket em `8000`.
 
 ## 🎯 Como Usar
 
@@ -119,6 +106,20 @@ A interface web estará disponível em `http://localhost:3000`.
 cd web-app
 .\start-clients.ps1
 ```
+
+## ✅ Verificação manual de entrega entre dois clientes locais
+
+1. Inicie o servidor TLS principal em um terminal: `python server/server.py cert.pem key.pem`.
+2. Inicie o bridge HTTP/WebSocket em outro terminal: `python server/web_bridge.py`.
+3. Em dois terminais separados, execute o frontend em portas distintas, apontando
+   para o mesmo bridge (ex.: `VITE_API_HOST=localhost VITE_API_PORT=8000 npm run dev -- --port 3000`
+   e `VITE_API_HOST=localhost VITE_API_PORT=8000 npm run dev -- --port 3001`).
+4. Abra `http://localhost:3000` e `http://localhost:3001`, registre/logue dois
+   usuários diferentes e conclua o MFA.
+5. Envie uma mensagem de um usuário para o outro e verifique se a entrega ocorre
+   em tempo real em ambas as janelas.
+6. Acesse `http://localhost:8000/api/status` para conferir quantas sessões e
+   conexões WebSocket estão abertas por cliente.
 
 ## 🔐 Segurança
 
@@ -170,13 +171,17 @@ Chat-Seguran-a/
 
 ### Erro de certificado
 
-- Certifique-se de que `cert.pem` existe na raiz do projeto
-- Execute `python server/generate_cert.py` novamente se necessário
+- Use `python server/server.py --regen-tls` para gerar um novo par e gravá-lo na
+  tabela `tls_credentials` do `chatseguro.db`
+- Certifique-se de que o processo tem permissão de escrita no arquivo
+  `chatseguro.db`
 
 ## 📝 Notas
 
-- As chaves privadas são armazenadas localmente em `{client_id}_key.pem`
-- As chaves públicas são armazenadas no servidor em `pubkeys.json`
+- As chaves públicas dos clientes são armazenadas no servidor em
+  `chatseguro.db` (tabela `public_keys`)
+- O certificado e a chave privada TLS do servidor ficam em
+  `chatseguro.db` (tabela `tls_credentials`)
 - O servidor nunca descriptografa as mensagens (apenas transporta)
 - Cada cliente descriptografa suas próprias mensagens
 

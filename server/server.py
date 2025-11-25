@@ -3,10 +3,24 @@ import builtins
 import contextlib
 import json
 import logging
+import os
 import ssl
+import tempfile
 from argparse import ArgumentParser
-from pathlib import Path
-from db_core import get_conn, init_db, DEFAULT_DB_PATH
+from datetime import datetime, timedelta
+
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
+
+from db_core import (
+    DEFAULT_DB_PATH,
+    get_conn,
+    get_tls_credentials,
+    init_db,
+    store_tls_credentials,
+)
 
 # -------------------------------------------------------------------
 # Logging
@@ -20,9 +34,95 @@ log = logging.getLogger("chatseguro.server")
 
 DB_PATH = DEFAULT_DB_PATH
 PUBLIC_KEYS = {}  # client_id -> base64 pubkey
-BLOBS = {}  # recipient_id -> [ {from, blob(base64), meta} ]
 ACTIVE_CLIENTS = {}  # client_id -> {reader, writer}
 GROUPS = {}  # group_id -> { "members": [client_id], "admin": client_id }
+TLS_CERT = None
+TLS_KEY = None
+
+
+def load_groups_from_db() -> None:
+    global GROUPS
+
+    with get_conn(DB_PATH) as conn:
+        cur = conn.cursor()
+        group_rows = cur.execute("SELECT group_id, admin FROM groups").fetchall()
+        member_rows = cur.execute(
+            "SELECT group_id, client_id FROM group_members"
+        ).fetchall()
+
+    groups: dict[str, dict[str, list[str] | str]] = {}
+    for row in group_rows:
+        groups[row["group_id"]] = {"admin": row["admin"], "members": []}
+
+    for member_row in member_rows:
+        group = groups.setdefault(
+            member_row["group_id"], {"admin": "", "members": []}
+        )
+        group["members"].append(member_row["client_id"])
+
+    GROUPS = groups
+
+
+def persist_group(group_id: str, members: list[str], admin: str) -> None:
+    with get_conn(DB_PATH) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO groups (group_id, admin) VALUES (?, ?)",
+            (group_id, admin),
+        )
+        conn.executemany(
+            "INSERT OR IGNORE INTO group_members (group_id, client_id) VALUES (?, ?)",
+            [(group_id, member) for member in members],
+        )
+
+
+def persist_message(
+    *,
+    recipient_id: str,
+    sender_id: str,
+    blob: str,
+    meta: dict | None = None,
+    group_id: str | None = None,
+    msg_type: str = "private",
+) -> None:
+    meta_json = json.dumps(meta or {})
+    with get_conn(DB_PATH) as conn:
+        conn.execute(
+            """
+            INSERT INTO messages (recipient_id, sender_id, blob_b64, meta_json, group_id, msg_type)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (recipient_id, sender_id, blob, meta_json, group_id, msg_type),
+        )
+
+
+def fetch_pending_messages(client_id: str) -> list[dict]:
+    with get_conn(DB_PATH) as conn:
+        conn.execute("BEGIN IMMEDIATE;")
+        rows = conn.execute(
+            """
+            SELECT id, sender_id, blob_b64, meta_json, group_id, msg_type
+            FROM messages
+            WHERE recipient_id = ?
+            ORDER BY id
+            """,
+            (client_id,),
+        ).fetchall()
+        ids = [row["id"] for row in rows]
+        if ids:
+            placeholders = ",".join("?" for _ in ids)
+            conn.execute(f"DELETE FROM messages WHERE id IN ({placeholders})", ids)
+
+    pending: list[dict] = []
+    for row in rows:
+        message = {"from": row["sender_id"], "blob": row["blob_b64"]}
+        if row["msg_type"] == "group":
+            message["group_id"] = row["group_id"]
+            message["type"] = "group"
+        else:
+            message["meta"] = json.loads(row["meta_json"] or "{}")
+        pending.append(message)
+
+    return pending
 
 
 def init_pubkeys():
@@ -45,7 +145,63 @@ def init_pubkeys():
         "  └─ ✅ Tabela public_keys carregada (%d chaves públicas)",
         len(PUBLIC_KEYS),
     )
+    load_groups_from_db()
+    log.info("  └─ ✅ Tabelas de grupos carregadas (%d grupos)", len(GROUPS))
     log.info("=" * 70)
+
+
+def generate_tls_credentials() -> tuple[str, str]:
+    log.info("[server.py][TLS] Gerando par RSA e certificado autoassinado")
+    private_key: rsa.RSAPrivateKey = rsa.generate_private_key(
+        public_exponent=65537, key_size=2048
+    )
+    key_bytes = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+
+    subject = issuer = x509.Name(
+        [
+            x509.NameAttribute(NameOID.COUNTRY_NAME, "BR"),
+            x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "Amazonas"),
+            x509.NameAttribute(NameOID.LOCALITY_NAME, "Manaus"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "ChatSeguro"),
+            x509.NameAttribute(NameOID.COMMON_NAME, "localhost"),
+        ]
+    )
+
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(private_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.utcnow())
+        .not_valid_after(datetime.utcnow() + timedelta(days=365))
+        .add_extension(
+            x509.SubjectAlternativeName([x509.DNSName("localhost")]),
+            critical=False,
+        )
+        .sign(private_key, hashes.SHA256())
+    )
+
+    cert_bytes = cert.public_bytes(serialization.Encoding.PEM)
+    return cert_bytes.decode(), key_bytes.decode()
+
+
+def ensure_tls_credentials(regenerate: bool = False) -> tuple[str, str]:
+    init_db(DB_PATH)
+    if not regenerate:
+        stored = get_tls_credentials(DB_PATH)
+        if stored:
+            log.info("[server.py][TLS] Certificado carregado do SQLite")
+            return stored
+
+    cert_pem, key_pem = generate_tls_credentials()
+    store_tls_credentials(cert_pem, key_pem, DB_PATH)
+    log.info("[server.py][TLS] Novo par TLS salvo em tls_credentials (SQLite)")
+    return cert_pem, key_pem
 
 
 # atualiza o json ao receber nova chave
@@ -155,8 +311,12 @@ async def handle_reader(reader, writer):
                 if not to or not frm or not blob:
                     await send_error(writer, "send_blob requer to, from e blob")
                     continue
-                BLOBS.setdefault(to, []).append(
-                    {"from": frm, "blob": blob, "meta": meta}
+                persist_message(
+                    recipient_id=to,
+                    sender_id=frm,
+                    blob=blob,
+                    meta=meta,
+                    msg_type="private",
                 )
 
                 log.info("")
@@ -194,6 +354,7 @@ async def handle_reader(reader, writer):
                     continue
 
                 GROUPS[group_id] = {"members": members, "admin": admin}
+                persist_group(group_id, members, admin)
 
                 log.info("")
                 log.info("[server.py][GRUPO][CREATE] Novo grupo criado")
@@ -246,13 +407,12 @@ async def handle_reader(reader, writer):
                 # distribuir a mensagem para os outros membros
                 for member in group["members"]:
                     if member != frm:
-                        BLOBS.setdefault(member, []).append(
-                            {
-                                "from": frm,
-                                "blob": blob,
-                                "group_id": group_id,
-                                "type": "group",
-                            }
+                        persist_message(
+                            recipient_id=member,
+                            sender_id=frm,
+                            blob=blob,
+                            group_id=group_id,
+                            msg_type="group",
                         )
                 await send_ok(writer, {"message": "stored for group"})
 
@@ -261,7 +421,7 @@ async def handle_reader(reader, writer):
                 if not cid:
                     await send_error(writer, "fetch_blobs requer client_id")
                     continue
-                items = BLOBS.pop(cid, [])
+                items = fetch_pending_messages(cid)
 
                 if items:
                     log.info("")
@@ -271,6 +431,18 @@ async def handle_reader(reader, writer):
                     )
                     log.info("  └─ Cliente: %s", cid)
                     log.info("  └─ Quantidade de mensagens: %d", len(items))
+                    log.info(
+                        "  └─ Fila limpa de forma transacional para %s:%s",
+                        *(addr or ("desconhecido", "-")),
+                    )
+                else:
+                    log.info("")
+                    log.info("[server.py][FETCH] Nenhuma mensagem pendente")
+                    log.info("  └─ Cliente: %s", cid)
+                    log.info(
+                        "  └─ Requisição recebida de %s:%s",
+                        *(addr or ("desconhecido", "-")),
+                    )
 
                 await send_ok(writer, {"messages": items})
 
@@ -299,16 +471,33 @@ async def handle_reader(reader, writer):
             await writer.wait_closed()
 
 
-async def main(certfile, keyfile, host="0.0.0.0", port=4433):
+def configure_ssl_context(cert_pem: str, key_pem: str) -> ssl.SSLContext:
+    sslctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    cert_fd, cert_path = tempfile.mkstemp()
+    key_fd, key_path = tempfile.mkstemp()
+
+    try:
+        with os.fdopen(cert_fd, "w") as cert_tmp, os.fdopen(key_fd, "w") as key_tmp:
+            cert_tmp.write(cert_pem)
+            cert_tmp.flush()
+            key_tmp.write(key_pem)
+            key_tmp.flush()
+        sslctx.load_cert_chain(cert_path, key_path)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(cert_path)
+            os.remove(key_path)
+    return sslctx
+
+
+async def main(cert_pem: str, key_pem: str, host="0.0.0.0", port=4433):
     log.info("")
     log.info("[server.py][SSL/TLS] Configurando contexto SSL/TLS")
     log.info("  └─ Arquivo: server.py | Função: main()")
-    log.info("  └─ Certificado: %s", certfile)
-    log.info("  └─ Chave privada: %s", keyfile)
+    log.info("  └─ Origem do certificado: tabela tls_credentials (SQLite)")
     log.info("  └─ Protocolo: TLS (Transport Layer Security)")
 
-    sslctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-    sslctx.load_cert_chain(certfile, keyfile)
+    sslctx = configure_ssl_context(cert_pem, key_pem)
 
     server = await asyncio.start_server(handle_reader, host, port, ssl=sslctx)
     addrs = ", ".join(str(sock.getsockname()) for sock in server.sockets)
@@ -328,14 +517,18 @@ async def main(certfile, keyfile, host="0.0.0.0", port=4433):
 
 
 if __name__ == "__main__":
-    init_pubkeys()
     p = ArgumentParser()
-    p.add_argument("certfile")
-    p.add_argument("keyfile")
     p.add_argument("--host", default="0.0.0.0")
     p.add_argument("--port", default=4433, type=int)
+    p.add_argument(
+        "--regen-tls",
+        action="store_true",
+        help="gera e substitui o certificado/chave armazenados no SQLite",
+    )
     args = p.parse_args()
     try:
-        asyncio.run(main(args.certfile, args.keyfile, args.host, args.port))
+        TLS_CERT, TLS_KEY = ensure_tls_credentials(regenerate=args.regen_tls)
+        init_pubkeys()
+        asyncio.run(main(TLS_CERT, TLS_KEY, args.host, args.port))
     except KeyboardInterrupt:
         log.info("\n[server.py] Servidor encerrado pelo usuário")

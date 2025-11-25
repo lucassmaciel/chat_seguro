@@ -49,29 +49,19 @@ class EmailService:
         self.settings = settings
         self.timeout = timeout
         self._ssl_context = ssl.create_default_context()
+        self._has_smtp_config = self._settings_complete()
 
-        if self.env_mode != "development":
-            missing = [
-                name
-                for name, value in (
-                    ("EMAIL_HOST", self.settings.host),
-                    ("EMAIL_PORT", self.settings.port),
-                    ("EMAIL_USER", self.settings.username),
-                    ("EMAIL_PASSWORD", self.settings.password),
-                    ("EMAIL_FROM", self.settings.sender),
-                )
-                if value in (None, "")
-            ]
-            if missing:
-                joined = ", ".join(missing)
-                message = (
-                    "Configuração de e-mail incompleta fora do ambiente de desenvolvimento: "
-                    f"{joined}"
-                )
-                raise EmailServiceError(message)
+        if self.env_mode != "development" and not self._has_smtp_config:
+            missing = self._missing_settings()
+            joined = ", ".join(missing)
+            message = (
+                "Configuração de e-mail incompleta fora do ambiente de desenvolvimento: "
+                f"{joined}"
+            )
+            raise EmailServiceError(message)
 
     def send_mfa_code(self, email: str, code: str) -> None:
-        if self.env_mode == "development":
+        if self.env_mode == "development" and not self._has_smtp_config:
             self._log_code(email, code)
             return
 
@@ -81,14 +71,30 @@ class EmailService:
         except (smtplib.SMTPException, OSError) as exc:  # pragma: no cover - rede externa
             raise EmailDeliveryError("Falha ao enviar e-mail via SMTP") from exc
 
+    def _settings_complete(self) -> bool:
+        return not self._missing_settings()
+
+    def _missing_settings(self) -> list[str]:
+        return [
+            name
+            for name, value in (
+                ("EMAIL_HOST", self.settings.host),
+                ("EMAIL_PORT", self.settings.port),
+                ("EMAIL_USER", self.settings.username),
+                ("EMAIL_PASSWORD", self.settings.password),
+                ("EMAIL_FROM", self.settings.sender),
+            )
+            if value in (None, "")
+        ]
+
     def _build_message(self, recipient: str, code: str) -> EmailMessage:
-        subject = "Código MFA - Chat Seguro"
+        subject = "Código MFA"
         body = (
             "Olá,\n\n"
             "Segue o seu código de autenticação de dois fatores: "
             f"{code}.\n"
-            "Se você não solicitou este código, ignore este e-mail."
-            "\n\nEquipe Chat Seguro"
+            "\nSe você não solicitou este código, ignore este e-mail."
+            "\n\nEquipe Show papai"
         )
         message = EmailMessage()
         message["Subject"] = subject

@@ -2,6 +2,10 @@
 Servidor HTTP/WebSocket bridge para interface React.
 Faz proxy entre o React e o servidor TLS existente.
 Suporta múltiplos clientes simultâneos.
+
+Este bridge foi projetado exclusivamente para uso local em loopback, com
+CORS totalmente liberado e validação TLS simplificada (aceita o
+certificado autoassinado gerado pelo servidor a partir do SQLite).
 """
 
 import asyncio
@@ -16,6 +20,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from dotenv import load_dotenv
 from pydantic import BaseModel, EmailStr
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -33,112 +38,57 @@ from server.db_core import DEFAULT_DB_PATH
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("web_bridge")
 
-DEFAULT_DEV_ORIGIN = "http://localhost:3000"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(PROJECT_ROOT / ".env")
+
 ENV_MODE = getenv("ENV", "development").lower()
+TLS_SERVER_NAME: str | None = None
+TLS_INSECURE_SKIP_VERIFY = True
 
 
-def _load_allowed_origins(env_mode: str) -> list[str]:
-    """Carrega origens autorizadas a partir de env ou arquivo."""
-    raw_env = getenv("ALLOWED_ORIGINS")
-    config_path = Path(getenv("ALLOWED_ORIGINS_FILE", "allowed_origins.json"))
-    origins: list[str] = []
+def _parse_int_env(var_name: str, default: int) -> int:
+    raw_value = getenv(var_name)
+    if raw_value is None:
+        return default
+    try:
+        return int(raw_value)
+    except ValueError as exc:  # noqa: TRY003
+        raise RuntimeError(f"{var_name} deve ser um inteiro válido") from exc
 
-    if raw_env:
-        origins = [origin.strip() for origin in raw_env.split(",") if origin.strip()]
-    elif config_path.exists():
-        try:
-            data = json.loads(config_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(
-                "O arquivo de origens permitidas deve conter uma lista JSON válida",
-            ) from exc
-
-        if not isinstance(data, list):
-            raise RuntimeError(
-                "O arquivo de origens permitidas deve ser uma lista JSON de strings",
-            )
-
-        origins = [str(origin).strip() for origin in data if str(origin).strip()]
-
-    if env_mode == "production" and not origins:
-        raise RuntimeError(
-            "Configure ALLOWED_ORIGINS (ou um arquivo allowed_origins.json) com os domínios"
-            " autorizados antes de iniciar em produção.",
-        )
-
-    if env_mode != "production" and DEFAULT_DEV_ORIGIN not in origins:
-        origins.append(DEFAULT_DEV_ORIGIN)
-
-    # Remover duplicados preservando a ordem para logs mais limpos
-    seen: set[str] = set()
-    unique_origins: list[str] = []
-    for origin in origins:
-        if origin not in seen:
-            unique_origins.append(origin)
-            seen.add(origin)
-    origins = unique_origins
-
-    if not origins:
-        log.warning(
-            "Nenhuma origem configurada. O servidor aceitará apenas requisições sem"
-            " cabeçalho Origin.",
-        )
-    else:
-        log.info(
-            "CORS ativo (%s): %s",
-            env_mode,
-            ", ".join(origins),
-        )
-
-    return origins
-
-
-ALLOWED_ORIGINS = _load_allowed_origins(ENV_MODE)
-ALLOWED_ORIGINS_SET = set(ALLOWED_ORIGINS)
 
 app = FastAPI(title="Chat Seguro Web Bridge")
-
-
-def _is_origin_allowed(origin: str | None) -> bool:
-    if not origin:
-        return ENV_MODE != "production"
-    return origin in ALLOWED_ORIGINS_SET
 
 
 # CORS para permitir conexões do React
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=[],
+    allow_origin_regex=".*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-@app.middleware("http")
-async def enforce_allowed_origins(request: Request, call_next):
-    origin = request.headers.get("origin")
-    if not _is_origin_allowed(origin):
-        log.warning("Origem HTTP não autorizada: %s", origin)
-        return JSONResponse(
-            status_code=403,
-            content={
-                "status": "error",
-                "message": "Origem não autorizada para este servidor",
-            },
-        )
-    return await call_next(request)
+@app.get("/api/health")
+async def healthcheck():
+    return {"status": "ok", "mode": ENV_MODE, "sessions": len(active_sessions)}
 
 # Armazenamento de sessões ativas (suporta múltiplos clientes)
 active_sessions: dict[str, ChatLogic] = {}
 websocket_connections: dict[str, set[WebSocket]] = {}
 pending_mfa: dict[str, dict] = {}
 session_tokens: dict[str, dict] = {}
+metrics: dict[str, int] = {
+    "sessions_created": 0,
+    "tls_handshakes": 0,
+    "ws_messages_sent": 0,
+}
 
-# Configuração do servidor TLS
-SERVER_HOST = "localhost"
-SERVER_PORT = 4433
-CACERT = "cert.pem"
+# Configuração do servidor TLS (uso apenas local/loopback)
+SERVER_HOST = "127.0.0.1"
+SERVER_PORT = _parse_int_env("TLS_PORT", 4433)
+CACERT: Path | None = None
 
 user_store = UserStore(DEFAULT_DB_PATH)
 
@@ -196,6 +146,16 @@ def notify_websockets(client_id: str, event_type: str, data: dict):
         disconnected = set()
         for ws in websocket_connections[client_id]:
             try:
+                remote_host = getattr(ws.client, "host", "unknown") if ws.client else "unknown"
+                remote_port = getattr(ws.client, "port", "unknown") if ws.client else "unknown"
+                log.info(
+                    "Enviando evento %s para %s via WebSocket (%s:%s)",
+                    event_type,
+                    client_id,
+                    remote_host,
+                    remote_port,
+                )
+                metrics["ws_messages_sent"] += 1
                 asyncio.create_task(ws.send_text(message))
             except Exception as e:
                 log.error(f"Erro ao enviar para WebSocket: {e}")
@@ -211,10 +171,26 @@ async def get_status():
             "status": "ok",
             "active_sessions": len(active_sessions),
             "clients": list(active_sessions.keys()),
+            "tls": {
+                "host": SERVER_HOST,
+                "port": SERVER_PORT,
+                "server_name": TLS_SERVER_NAME,
+                "insecure_skip_verify": TLS_INSECURE_SKIP_VERIFY,
+            },
             "websocket_connections": {
-                client_id: len(connections)
+                client_id: {
+                    "count": len(connections),
+                    "remotes": sorted(
+                        {
+                            f"{getattr(conn.client, 'host', 'unknown')}:{getattr(conn.client, 'port', 'unknown')}"
+                            for conn in connections
+                            if conn.client
+                        }
+                    ),
+                }
                 for client_id, connections in websocket_connections.items()
             },
+            "metrics": metrics,
         }
     )
 
@@ -225,7 +201,22 @@ async def _establish_session(client_id: str) -> dict:
     if client_id in active_sessions:
         return {"client_id": client_id, "session_active": True}
 
-    logic = ChatLogic(SERVER_HOST, SERVER_PORT, CACERT, client_id)
+    log.info(
+        "Criando sessão TLS para %s em %s:%s (server_name=%s, insecure_skip_verify=%s)",
+        client_id,
+        SERVER_HOST,
+        SERVER_PORT,
+        TLS_SERVER_NAME,
+        TLS_INSECURE_SKIP_VERIFY,
+    )
+    logic = ChatLogic(
+        SERVER_HOST,
+        SERVER_PORT,
+        CACERT,
+        client_id,
+        server_name=TLS_SERVER_NAME,
+        insecure_skip_verify=TLS_INSECURE_SKIP_VERIFY,
+    )
 
     def on_new_message(peer, message):
         notify_websockets(client_id, "new_message", {"peer": peer, "message": message})
@@ -236,10 +227,30 @@ async def _establish_session(client_id: str) -> dict:
     logic.on_new_message = on_new_message
     logic.on_update_ui = on_update_ui
 
-    success = await logic.publish_key()
-    if not success:
-        raise HTTPException(status_code=500, detail="Falha ao publicar chave")
+    try:
+        publish_response = await logic.publish_key()
+    except Exception as exc:  # noqa: BLE001
+        log.error("Erro ao publicar chave para %s: %s", client_id, exc)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Não foi possível se conectar ao servidor TLS. "
+                "Verifique se ele está em execução."
+            ),
+        ) from exc
 
+    if publish_response.get("status") != "ok":
+        reason = publish_response.get("reason") or "Falha ao publicar chave"
+        log.error("Publicação de chave falhou para %s: %s", client_id, reason)
+        raise HTTPException(
+            status_code=503,
+            detail=f"Falha ao conectar ao servidor TLS: {reason}",
+        )
+
+    metrics["tls_handshakes"] += 1
+    log.info(
+        "Handshake TLS concluído para %s em %s:%s", client_id, SERVER_HOST, SERVER_PORT
+    )
     active_sessions[client_id] = logic
     websocket_connections[client_id] = set()
     asyncio.create_task(poll_messages(client_id))
@@ -249,6 +260,7 @@ async def _establish_session(client_id: str) -> dict:
         client_id,
         len(active_sessions),
     )
+    metrics["sessions_created"] += 1
     return {"client_id": client_id, "session_active": False}
 
 
@@ -512,12 +524,6 @@ async def create_group(payload: CreateGroupRequest, request: Request):
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
     """WebSocket para notificações em tempo real - suporta múltiplas conexões por cliente"""
-    origin = websocket.headers.get("origin")
-    if not _is_origin_allowed(origin):
-        log.warning("Origem WebSocket não autorizada: %s", origin)
-        await websocket.close(code=1008)
-        return
-
     await websocket.accept()
 
     if client_id not in websocket_connections:
