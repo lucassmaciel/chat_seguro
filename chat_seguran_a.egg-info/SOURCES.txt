@@ -7,6 +7,7 @@ chat_seguran_a.egg-info/requires.txt
 chat_seguran_a.egg-info/top_level.txt
 client/__init__.py
 client/chat_client_logic.py
+client/key_store.py
 client/persistence.py
 server/__init__.py
 server/db_core.py

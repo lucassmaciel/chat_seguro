@@ -2,6 +2,7 @@
 
 Sistema de chat seguro com criptografia end-to-end usando ECDH (X25519) + Salsa20+Poly1305. Este guia cobre **apenas uso local** (dev server, bridge e frontend) e **não prepara para deployment**. O fluxo de MFA permanece igual e obrigatório.
 
+
 ## 📋 Pré-requisitos
 
 - Python 3.12+
