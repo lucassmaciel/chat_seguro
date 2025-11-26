@@ -156,36 +156,35 @@ def _recover_blob(blob_b64: str, auth_tag: str | None) -> str | None:
     return box.decrypt(cipher).decode()
 
 
-def _enforce_queue_limit(recipient_id: str) -> None:
+def _trim_queue(conn, recipient_id: str) -> None:
     if MAX_PENDING_PER_CLIENT <= 0:
         return
-    with get_conn(DB_PATH) as conn:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT COUNT(*) FROM messages WHERE recipient_id = ?", (recipient_id,)
+
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM messages WHERE recipient_id = ?", (recipient_id,))
+    current = cur.fetchone()[0]
+    if current <= MAX_PENDING_PER_CLIENT:
+        return
+
+    overflow = current - MAX_PENDING_PER_CLIENT
+    cur.execute(
+        """
+        DELETE FROM messages
+        WHERE id IN (
+            SELECT id FROM messages
+            WHERE recipient_id = ?
+            ORDER BY id
+            LIMIT ?
         )
-        current = cur.fetchone()[0]
-        if current < MAX_PENDING_PER_CLIENT:
-            return
-        overflow = current - MAX_PENDING_PER_CLIENT + 1
-        cur.execute(
-            """
-            DELETE FROM messages
-            WHERE id IN (
-                SELECT id FROM messages
-                WHERE recipient_id = ?
-                ORDER BY id
-                LIMIT ?
-            )
-            """,
-            (recipient_id, overflow),
-        )
-        log.warning(
-            "Fila de %s reduzia: %d mensagens descartadas por limite de %d",
-            recipient_id,
-            overflow,
-            MAX_PENDING_PER_CLIENT,
-        )
+        """,
+        (recipient_id, overflow),
+    )
+    log.warning(
+        "Fila de %s reduzia: %d mensagens descartadas por limite de %d",
+        recipient_id,
+        overflow,
+        MAX_PENDING_PER_CLIENT,
+    )
 
 
 def persist_message(
@@ -199,8 +198,8 @@ def persist_message(
 ) -> None:
     meta_json = json.dumps(meta or {})
     cipher_b64, auth_tag = _protect_blob(blob)
-    _enforce_queue_limit(recipient_id)
     with get_conn(DB_PATH) as conn:
+        conn.execute("BEGIN IMMEDIATE;")
         conn.execute(
             """
             INSERT INTO messages (recipient_id, sender_id, blob_b64, auth_tag, meta_json, group_id, msg_type)
@@ -208,6 +207,7 @@ def persist_message(
             """,
             (recipient_id, sender_id, cipher_b64, auth_tag, meta_json, group_id, msg_type),
         )
+        _trim_queue(conn, recipient_id)
 
 
 def fetch_pending_messages(client_id: str) -> list[dict]:
