@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import base64
 import hashlib
+import json
 import os
 import sqlite3
-from pathlib import Path
 from typing import Optional
-import base64
+
 from dotenv import load_dotenv
 
 from nacl.secret import SecretBox
@@ -43,36 +44,33 @@ def _init_db() -> None:
 
 
 def _derive_key(client_id: str) -> bytes:
-    """
-    Deriva uma chave de 32 bytes a partir de:
-      - segredo mestre (LOCAL_KEY_SECRET)
-      - client_id
-    Assim, cada cliente tem uma chave diferente mesmo com o mesmo segredo mestre.
-    """
+    """Deriva uma chave de 32 bytes única por cliente com BLAKE2b."""
+
     secret = os.getenv(crypto_key)
     if not secret:
         raise RuntimeError(
             f"{crypto_key} não definido no ambiente. "
-            "Defina um valor forte para proteger as chaves privadas."
+            "Defina um valor base64 de pelo menos 32 bytes para proteger as chaves privadas."
         )
 
     try:
-
         raw = base64.b64decode(secret)
-        if len(raw) == 0:
-            raise ValueError
-    except Exception:
-        raw = secret.encode("utf-8")
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(
+            f"{crypto_key} deve estar em base64 seguro e ter entropia suficiente"
+        ) from exc
 
-    # SHA-256(secret || ":" || client_id) -> 32 bytes
-    h = hashlib.sha256()
-    h.update(raw)
-    h.update(b":")
-    h.update(client_id.encode("utf-8"))
-    return h.digest()  # 32 bytes
+    if len(raw) < SecretBox.KEY_SIZE:
+        raise RuntimeError(f"{crypto_key} deve ter pelo menos 32 bytes de entropia")
+
+    return hashlib.blake2b(
+        raw,
+        digest_size=SecretBox.KEY_SIZE,
+        person=f"keystore:{client_id}".encode(),
+    ).digest()
 
 
-def load_private_key_bytes(client_id: str) -> Optional[bytes]:
+def load_private_key_bytes(client_id: str) -> Optional[tuple[bytes, Optional[bytes]]]:
     """
     Retorna os bytes da PrivateKey do client_id (já decriptados),
     ou None se ainda não existir.
@@ -93,18 +91,29 @@ def load_private_key_bytes(client_id: str) -> Optional[bytes]:
     key = _derive_key(client_id)
     box = SecretBox(key)
     priv_bytes = box.decrypt(cipher)
-    return priv_bytes
+    try:
+        payload = json.loads(priv_bytes.decode())
+        box_priv = base64.b64decode(payload["box_priv"])
+        signing_priv = (
+            base64.b64decode(payload["signing_priv"]) if payload.get("signing_priv") else None
+        )
+        return box_priv, signing_priv
+    except Exception:
+        return priv_bytes, None
 
 
-def store_private_key_bytes(client_id: str, priv_bytes: bytes) -> None:
-    """
-    Criptografa e persiste os bytes da PrivateKey no SQLite.
-    """
+def store_private_key_bytes(client_id: str, priv_bytes: bytes, signing_priv: bytes | None = None) -> None:
+    """Criptografa e persiste os bytes da PrivateKey no SQLite."""
+
     _init_db()
 
+    payload = {
+        "box_priv": base64.b64encode(priv_bytes).decode(),
+        "signing_priv": base64.b64encode(signing_priv).decode() if signing_priv else None,
+    }
     key = _derive_key(client_id)
     box = SecretBox(key)
-    cipher: bytes = box.encrypt(priv_bytes)  # nonce + MAC + ciphertxt
+    cipher: bytes = box.encrypt(json.dumps(payload).encode())  # nonce + MAC + ciphertxt
 
     with _get_conn() as conn:
         conn.execute(

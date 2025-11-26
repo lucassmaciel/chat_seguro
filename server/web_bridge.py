@@ -139,6 +139,11 @@ class SendMessageRequest(BaseModel):
     message: str
 
 
+class RemoveGroupRequest(BaseModel):
+    group_id: str
+    member_id: str
+
+
 def notify_websockets(client_id: str, event_type: str, data: dict):
     """Notifica todos os WebSockets conectados de um cliente"""
     if client_id in websocket_connections:
@@ -519,6 +524,24 @@ async def create_group(payload: CreateGroupRequest, request: Request):
     logic.save_state()  # Salvar após criar grupo
 
     return JSONResponse({"status": "ok", "message": "Grupo criado"})
+
+
+@app.post("/api/remove-group-member")
+async def remove_group_member(payload: RemoveGroupRequest, request: Request):
+    """Remove um participante do grupo (somente admin)."""
+    _, client_id = _require_session(request)
+
+    if client_id not in active_sessions:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+
+    logic = active_sessions[client_id]
+    response = await logic.remove_group_member(payload.group_id, payload.member_id)
+    if response.get("status") != "ok" or not response.get("removed", False):
+        reason = response.get("reason") or "falha ao remover membro"
+        raise HTTPException(status_code=400, detail=reason)
+
+    notify_websockets(client_id, "update_ui", {})
+    return JSONResponse({"status": "ok", "removed": True})
 
 
 @app.websocket("/ws/{client_id}")

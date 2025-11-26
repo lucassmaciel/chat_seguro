@@ -1,18 +1,23 @@
 import asyncio
+import base64
 import builtins
 import contextlib
+import hashlib
+import hmac
 import json
 import logging
 import os
 import ssl
 import tempfile
 from argparse import ArgumentParser
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
+from nacl.secret import SecretBox
+from nacl.signing import VerifyKey
 
 from db_core import (
     DEFAULT_DB_PATH,
@@ -34,10 +39,47 @@ log = logging.getLogger("chatseguro.server")
 
 DB_PATH = DEFAULT_DB_PATH
 PUBLIC_KEYS = {}  # client_id -> base64 pubkey
+SIGNING_PUBKEYS: dict[str, str] = {}  # client_id -> base64 signing pubkey
 ACTIVE_CLIENTS = {}  # client_id -> {reader, writer}
 GROUPS = {}  # group_id -> { "members": [client_id], "admin": client_id }
 TLS_CERT = None
 TLS_KEY = None
+MESSAGE_BOX: SecretBox | None = None
+MESSAGE_AUTH_KEY: bytes | None = None
+MAX_PENDING_PER_CLIENT = int(os.getenv("MAX_PENDING_PER_CLIENT", "500"))
+
+
+def _derive_message_keys(secret_material: bytes) -> tuple[SecretBox, bytes]:
+    mac_key = hashlib.blake2b(
+        secret_material, digest_size=SecretBox.KEY_SIZE, person=b"msg-mac"
+    ).digest()
+    box_key = hashlib.blake2b(
+        secret_material, digest_size=SecretBox.KEY_SIZE, person=b"msg-box"
+    ).digest()
+    return SecretBox(box_key), mac_key
+
+
+def ensure_message_protection() -> tuple[SecretBox, bytes]:
+    global MESSAGE_BOX, MESSAGE_AUTH_KEY, TLS_KEY
+
+    if MESSAGE_BOX and MESSAGE_AUTH_KEY:
+        return MESSAGE_BOX, MESSAGE_AUTH_KEY
+
+    env_key = os.getenv("MESSAGE_STORE_KEY_B64")
+    if env_key:
+        try:
+            material = base64.b64decode(env_key)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError("MESSAGE_STORE_KEY_B64 inválida") from exc
+        if len(material) < SecretBox.KEY_SIZE:
+            raise RuntimeError("MESSAGE_STORE_KEY_B64 deve ter pelo menos 32 bytes")
+    else:
+        if TLS_KEY is None:
+            TLS_CERT, TLS_KEY = ensure_tls_credentials()
+        material = TLS_KEY.encode()
+
+    MESSAGE_BOX, MESSAGE_AUTH_KEY = _derive_message_keys(material)
+    return MESSAGE_BOX, MESSAGE_AUTH_KEY
 
 
 def load_groups_from_db() -> None:
@@ -75,6 +117,77 @@ def persist_group(group_id: str, members: list[str], admin: str) -> None:
         )
 
 
+def remove_group_member(group_id: str, member: str, requester: str) -> bool:
+    group = GROUPS.get(group_id)
+    if not group:
+        raise ValueError("grupo não encontrado")
+    if requester != group.get("admin"):
+        raise PermissionError("apenas o administrador pode remover membros")
+    if member == requester:
+        raise PermissionError("o administrador não pode remover a si próprio")
+    if member not in group["members"]:
+        return False
+    group["members"].remove(member)
+    with get_conn(DB_PATH) as conn:
+        conn.execute(
+            "DELETE FROM group_members WHERE group_id = ? AND client_id = ?",
+            (group_id, member),
+        )
+    return True
+
+
+def _protect_blob(blob: str) -> tuple[str, str]:
+    box, auth_key = ensure_message_protection()
+    cipher = box.encrypt(blob.encode())
+    auth_tag = hmac.new(auth_key, cipher, hashlib.sha256).hexdigest()
+    return base64.b64encode(cipher).decode(), auth_tag
+
+
+def _recover_blob(blob_b64: str, auth_tag: str | None) -> str | None:
+    box, auth_key = ensure_message_protection()
+    cipher = base64.b64decode(blob_b64)
+    if not auth_tag:
+        log.warning("Mensagem sem tag autenticada descartada")
+        return None
+    expected = hmac.new(auth_key, cipher, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, auth_tag):
+        log.warning("Tag de integridade inválida; mensagem descartada")
+        return None
+    return box.decrypt(cipher).decode()
+
+
+def _enforce_queue_limit(recipient_id: str) -> None:
+    if MAX_PENDING_PER_CLIENT <= 0:
+        return
+    with get_conn(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) FROM messages WHERE recipient_id = ?", (recipient_id,)
+        )
+        current = cur.fetchone()[0]
+        if current < MAX_PENDING_PER_CLIENT:
+            return
+        overflow = current - MAX_PENDING_PER_CLIENT + 1
+        cur.execute(
+            """
+            DELETE FROM messages
+            WHERE id IN (
+                SELECT id FROM messages
+                WHERE recipient_id = ?
+                ORDER BY id
+                LIMIT ?
+            )
+            """,
+            (recipient_id, overflow),
+        )
+        log.warning(
+            "Fila de %s reduzia: %d mensagens descartadas por limite de %d",
+            recipient_id,
+            overflow,
+            MAX_PENDING_PER_CLIENT,
+        )
+
+
 def persist_message(
     *,
     recipient_id: str,
@@ -85,13 +198,15 @@ def persist_message(
     msg_type: str = "private",
 ) -> None:
     meta_json = json.dumps(meta or {})
+    cipher_b64, auth_tag = _protect_blob(blob)
+    _enforce_queue_limit(recipient_id)
     with get_conn(DB_PATH) as conn:
         conn.execute(
             """
-            INSERT INTO messages (recipient_id, sender_id, blob_b64, meta_json, group_id, msg_type)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO messages (recipient_id, sender_id, blob_b64, auth_tag, meta_json, group_id, msg_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (recipient_id, sender_id, blob, meta_json, group_id, msg_type),
+            (recipient_id, sender_id, cipher_b64, auth_tag, meta_json, group_id, msg_type),
         )
 
 
@@ -100,7 +215,7 @@ def fetch_pending_messages(client_id: str) -> list[dict]:
         conn.execute("BEGIN IMMEDIATE;")
         rows = conn.execute(
             """
-            SELECT id, sender_id, blob_b64, meta_json, group_id, msg_type
+            SELECT id, sender_id, blob_b64, auth_tag, meta_json, group_id, msg_type
             FROM messages
             WHERE recipient_id = ?
             ORDER BY id
@@ -114,7 +229,10 @@ def fetch_pending_messages(client_id: str) -> list[dict]:
 
     pending: list[dict] = []
     for row in rows:
-        message = {"from": row["sender_id"], "blob": row["blob_b64"]}
+        blob = _recover_blob(row["blob_b64"], row["auth_tag"])
+        if blob is None:
+            continue
+        message = {"from": row["sender_id"], "blob": blob}
         if row["msg_type"] == "group":
             message["group_id"] = row["group_id"]
             message["type"] = "group"
@@ -126,7 +244,7 @@ def fetch_pending_messages(client_id: str) -> list[dict]:
 
 
 def init_pubkeys():
-    global PUBLIC_KEYS
+    global PUBLIC_KEYS, SIGNING_PUBKEYS
     log.info("=" * 70)
     log.info("[server.py][INIT] Inicializando servidor de chat seguro")
     log.info("  └─ Arquivo: server.py | Função: init_pubkeys()")
@@ -137,9 +255,14 @@ def init_pubkeys():
     # Carrega chaves já existentes no banco
     with get_conn(DB_PATH) as conn:
         cur = conn.cursor()
-        cur.execute("SELECT client_id, pubkey_b64 FROM public_keys")
+        cur.execute(
+            "SELECT client_id, pubkey_b64, signing_pubkey_b64 FROM public_keys"
+        )
         rows = cur.fetchall()
         PUBLIC_KEYS = {row["client_id"]: row["pubkey_b64"] for row in rows}
+        SIGNING_PUBKEYS = {
+            row["client_id"]: row["signing_pubkey_b64"] or "" for row in rows
+        }
 
     log.info(
         "  └─ ✅ Tabela public_keys carregada (%d chaves públicas)",
@@ -177,8 +300,8 @@ def generate_tls_credentials() -> tuple[str, str]:
         .issuer_name(issuer)
         .public_key(private_key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(datetime.utcnow())
-        .not_valid_after(datetime.utcnow() + timedelta(days=365))
+        .not_valid_before(datetime.now(UTC))
+        .not_valid_after(datetime.now(UTC) + timedelta(days=365))
         .add_extension(
             x509.SubjectAlternativeName([x509.DNSName("localhost")]),
             critical=False,
@@ -204,22 +327,48 @@ def ensure_tls_credentials(regenerate: bool = False) -> tuple[str, str]:
     return cert_pem, key_pem
 
 
+def _require_proof_if_rotating(
+    client_id: str, pubkey_b64: str, signing_pubkey_b64: str | None, proof: str | None
+) -> None:
+    stored_signing = SIGNING_PUBKEYS.get(client_id)
+    if not stored_signing:
+        return
+    if not proof:
+        raise ValueError("rotação de chave requer prova de posse")
+    verify_key = VerifyKey(base64.b64decode(stored_signing))
+    message = f"{client_id}:{pubkey_b64}:{signing_pubkey_b64 or stored_signing}".encode()
+    verify_key.verify(message, base64.b64decode(proof))
+
+
 # atualiza o json ao receber nova chave
-def store_pubkey(client_id, pubkey_b64):
-    global PUBLIC_KEYS
+def store_pubkey(
+    client_id: str,
+    pubkey_b64: str,
+    *,
+    signing_pubkey_b64: str | None = None,
+    proof: str | None = None,
+):
+    global PUBLIC_KEYS, SIGNING_PUBKEYS
+
+    _require_proof_if_rotating(client_id, pubkey_b64, signing_pubkey_b64, proof)
+    if signing_pubkey_b64:
+        SIGNING_PUBKEYS[client_id] = signing_pubkey_b64
+    elif client_id not in SIGNING_PUBKEYS:
+        SIGNING_PUBKEYS[client_id] = ""
     PUBLIC_KEYS[client_id] = pubkey_b64
 
     with get_conn(DB_PATH) as conn:
         cur = conn.cursor()
         cur.execute(
             """
-            INSERT INTO public_keys (client_id, pubkey_b64)
-            VALUES (?, ?)
+            INSERT INTO public_keys (client_id, pubkey_b64, signing_pubkey_b64)
+            VALUES (?, ?, ?)
                 ON CONFLICT(client_id) DO UPDATE SET
                 pubkey_b64 = excluded.pubkey_b64,
-                                              updated_at = CURRENT_TIMESTAMP
+                signing_pubkey_b64 = COALESCE(excluded.signing_pubkey_b64, public_keys.signing_pubkey_b64),
+                updated_at = CURRENT_TIMESTAMP
             """,
-            (client_id, pubkey_b64),
+            (client_id, pubkey_b64, signing_pubkey_b64),
         )
 
     log.info("")
@@ -270,11 +419,22 @@ async def handle_reader(reader, writer):
             if mtype == "publish_key":
                 cid = msg.get("client_id")
                 pub = msg.get("pubkey")
+                signing_pubkey = msg.get("signing_pubkey")
+                proof = msg.get("proof")
                 if not cid or not pub:
                     await send_error(writer, "publish_key requer client_id e pubkey")
                     continue
 
-                store_pubkey(cid, pub)
+                try:
+                    store_pubkey(
+                        cid,
+                        pub,
+                        signing_pubkey_b64=signing_pubkey,
+                        proof=proof,
+                    )
+                except ValueError as exc:
+                    await send_error(writer, str(exc))
+                    continue
 
                 if cid not in ACTIVE_CLIENTS:
                     log.info("[server.py][LOGIN] Cliente conectado: %s", cid)
@@ -290,6 +450,7 @@ async def handle_reader(reader, writer):
                     continue
 
                 pub = PUBLIC_KEYS.get(cid)
+                signing_pub = SIGNING_PUBKEYS.get(cid)
                 if not pub:
                     await send_error(writer, "não encontrado")
                 else:
@@ -301,7 +462,10 @@ async def handle_reader(reader, writer):
                     log.info("  └─ Cliente solicitado: %s", cid)
                     log.info("  └─ Tamanho (base64): %d caracteres", len(pub))
                     log.info("  └─ ✅ Chave enviada ao solicitante")
-                    await send_ok(writer, {"client_id": cid, "pubkey": pub})
+                    await send_ok(
+                        writer,
+                        {"client_id": cid, "pubkey": pub, "signing_pubkey": signing_pub},
+                    )
 
             elif mtype == "send_blob":
                 to = msg.get("to")
@@ -415,6 +579,27 @@ async def handle_reader(reader, writer):
                             msg_type="group",
                         )
                 await send_ok(writer, {"message": "stored for group"})
+
+            elif mtype == "remove_group_member":
+                group_id = msg.get("group_id")
+                member = msg.get("member_id")
+                requester = msg.get("requester")
+                if not group_id or not member or not requester:
+                    await send_error(
+                        writer, "remove_group_member requer group_id, member_id e requester"
+                    )
+                    continue
+                try:
+                    removed = remove_group_member(group_id, member, requester)
+                except PermissionError as exc:
+                    await send_error(writer, str(exc))
+                    continue
+                except ValueError as exc:
+                    await send_error(writer, str(exc))
+                    continue
+                await send_ok(
+                    writer, {"message": "member processed", "removed": removed}
+                )
 
             elif mtype == "fetch_blobs":
                 cid = msg.get("client_id")
