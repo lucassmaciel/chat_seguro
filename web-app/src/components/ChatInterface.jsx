@@ -149,6 +149,33 @@ function ChatInterface({ clientId, sessionToken, onLogout }) {
     }
   }
 
+  const handleRemoveGroupMember = async (groupId, memberId) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/remove-group-member`, {
+        method: 'POST',
+        headers: buildAuthHeaders({
+          'Content-Type': 'application/json',
+        }),
+        body: JSON.stringify({
+          group_id: groupId,
+          member_id: memberId,
+        }),
+      })
+
+      const data = await response.json()
+      if (response.ok && data.status === 'ok') {
+        setTimeout(loadConversations, 300)
+        return { success: true }
+      }
+
+      const detail = data.detail || data.reason || 'Erro desconhecido'
+      return { success: false, error: detail }
+    } catch (error) {
+      console.error('Erro ao remover membro:', error)
+      return { success: false, error: 'Erro de conexão ao remover membro' }
+    }
+  }
+
   const handleCreateGroup = async (groupName, members) => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/create-group`, {
@@ -310,6 +337,7 @@ function ChatInterface({ clientId, sessionToken, onLogout }) {
               clientId={clientId}
               onSendMessage={handleSendMessage}
               onOpenSidebar={handleOpenSidebar}
+              onRemoveGroupMember={handleRemoveGroupMember}
             />
           ) : (
             <div className="flex-1 flex items-center justify-center bg-gray-900">

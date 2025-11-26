@@ -1,13 +1,12 @@
 import React, { useRef, useState } from 'react'
 
-function ChatWindow({ conversation, clientId, onSendMessage, onOpenSidebar }) {
+function ChatWindow({ conversation, clientId, onSendMessage, onOpenSidebar, onRemoveGroupMember }) {
   const [message, setMessage] = useState('')
+  const [isManagingGroup, setIsManagingGroup] = useState(false)
+  const [memberToRemove, setMemberToRemove] = useState('')
+  const [manageFeedback, setManageFeedback] = useState('')
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }
 
   const handleSubmit = (e) => {
     e.preventDefault()
@@ -24,6 +23,22 @@ function ChatWindow({ conversation, clientId, onSendMessage, onOpenSidebar }) {
       minute: '2-digit',
     })
     return timestamp
+  }
+
+  const handleRemoveMember = async (e) => {
+    e.preventDefault()
+    if (!conversation || conversation.type !== 'group') return
+    const memberId = memberToRemove.trim()
+    if (!memberId) return
+
+    setManageFeedback('')
+    const result = await onRemoveGroupMember(conversation.id, memberId)
+    if (result?.success) {
+      setManageFeedback(`Membro ${memberId} removido com sucesso`)
+      setMemberToRemove('')
+    } else {
+      setManageFeedback(result?.error || 'Não foi possível remover o membro')
+    }
   }
 
   return (
@@ -45,12 +60,22 @@ function ChatWindow({ conversation, clientId, onSendMessage, onOpenSidebar }) {
             </p>
           </div>
         </div>
-        <button
-          onClick={onOpenSidebar}
-          className="lg:hidden px-3 py-2 text-xs font-semibold text-gray-200 bg-gray-800 border border-gray-700 rounded-lg"
-        >
-          Conversas
-        </button>
+        <div className="flex items-center space-x-2">
+          {conversation.type === 'group' && (
+            <button
+              onClick={() => setIsManagingGroup((prev) => !prev)}
+              className="px-3 py-2 text-xs font-semibold text-gray-200 bg-purple-600/80 border border-purple-500/80 rounded-lg hover:bg-purple-600"
+            >
+              Gerenciar
+            </button>
+          )}
+          <button
+            onClick={onOpenSidebar}
+            className="lg:hidden px-3 py-2 text-xs font-semibold text-gray-200 bg-gray-800 border border-gray-700 rounded-lg"
+          >
+            Conversas
+          </button>
+        </div>
       </div>
 
       {/* Messages */}
@@ -105,17 +130,46 @@ function ChatWindow({ conversation, clientId, onSendMessage, onOpenSidebar }) {
         )}
       </div>
 
+      {conversation.type === 'group' && isManagingGroup && (
+        <div className="px-4 pb-4 space-y-2 border-t border-gray-800 bg-gray-900/90">
+          <div className="max-w-3xl mx-auto bg-gray-800 border border-gray-700 rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <p className="text-sm font-semibold text-white">Gerenciar grupo</p>
+                <p className="text-xs text-gray-400">Remova um participante do grupo atual</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsManagingGroup(false)}
+                className="text-gray-400 hover:text-white"
+              >
+                Fechar
+              </button>
+            </div>
+            <form onSubmit={handleRemoveMember} className="flex flex-col space-y-3 sm:flex-row sm:space-y-0 sm:space-x-3">
+              <input
+                type="text"
+                value={memberToRemove}
+                onChange={(e) => setMemberToRemove(e.target.value)}
+                placeholder="ID do membro para remover"
+                className="flex-1 px-4 py-3 bg-gray-900 border border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 text-white placeholder-gray-500"
+              />
+              <button
+                type="submit"
+                className="px-4 py-3 bg-gradient-to-br from-purple-500 to-purple-600 text-white rounded-xl shadow-lg hover:shadow-xl hover:shadow-purple-500/30 transition"
+              >
+                Remover membro
+              </button>
+            </form>
+            {manageFeedback && (
+              <p className="text-xs mt-2 text-gray-300">{manageFeedback}</p>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Input */}
       <div className="px-4 py-4 border-t border-gray-800 bg-gray-900 space-y-3">
-        <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={scrollToBottom}
-            className="text-xs px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-200 hover:border-blue-500 hover:text-white transition"
-          >
-            Ir para a última mensagem
-          </button>
-        </div>
         <form onSubmit={handleSubmit} className="max-w-3xl mx-auto">
           <div className="flex items-end space-x-3">
             <div className="flex-1 relative">
