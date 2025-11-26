@@ -74,7 +74,7 @@ function ChatWindow({ conversation, clientId, onSendMessage, onOpenSidebar, onRe
           </div>
         </div>
         <div className="flex items-center space-x-2">
-          {conversation.type === 'group' && (
+          {canManageGroup && (
             <button
               onClick={handleLeaveGroup}
               className="px-3 py-2 text-xs font-semibold text-gray-200 bg-red-600/80 border border-red-500/80 rounded-lg hover:bg-red-600"
