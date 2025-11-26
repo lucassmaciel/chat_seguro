@@ -9,6 +9,7 @@ from pathlib import Path
 from nacl import bindings as nb  # acesso às primitivas de baixo nível (libsodium)
 from nacl.public import PrivateKey, PublicKey
 from nacl.secret import SecretBox
+from nacl.signing import SigningKey
 
 from client.persistence import load_conversations, save_conversations
 from client.key_store import load_private_key_bytes, store_private_key_bytes
@@ -208,7 +209,7 @@ class ChatLogic:
             server_name=server_name,
             insecure_skip_verify=insecure_skip_verify,
         )
-        self.priv, self.pub = self.load_or_create_keys(client_id)
+        self.priv, self.pub, self.signing_key = self.load_or_create_keys(client_id)
 
         # Carregar conversas salvas
         self.conversations = load_conversations(client_id)
@@ -228,12 +229,14 @@ class ChatLogic:
         """
         # 1) Tenta keystore
         try:
-            priv_bytes = load_private_key_bytes(client_id)
+            loaded = load_private_key_bytes(client_id)
         except Exception as e:
             print(f"[WARN] Erro ao ler keystore local: {e}")
-            priv_bytes = None
+            loaded = None
 
-        if priv_bytes is not None:
+        signing_priv_bytes = None
+        if loaded is not None:
+            priv_bytes, signing_priv_bytes = loaded
             print(f"Bem-vindo de volta, {client_id}! Carregando chave do keystore local.")
             priv = PrivateKey(priv_bytes)
         else:
@@ -247,27 +250,41 @@ class ChatLogic:
                 priv = PrivateKey(priv_bytes)
                 # já que deu certo, persiste no keystore
                 try:
-                    store_private_key_bytes(client_id, bytes(priv))
+                    store_private_key_bytes(client_id, bytes(priv), signing_priv_bytes)
                 except Exception as e:
                     print(f"[WARN] Falha ao salvar chave no keystore: {e}")
             else:
                 # 3) Nova chave
                 print(f"Primeiro login de {client_id}. Gerando novo par de chaves.")
                 priv = PrivateKey.generate()
+                signing_priv_bytes = None
                 try:
-                    store_private_key_bytes(client_id, bytes(priv))
+                    store_private_key_bytes(client_id, bytes(priv), signing_priv_bytes)
                 except Exception as e:
                     print(f"[WARN] Falha ao salvar nova chave no keystore: {e}")
 
+        signing_key = (
+            SigningKey(signing_priv_bytes) if signing_priv_bytes else SigningKey.generate()
+        )
+        try:
+            store_private_key_bytes(client_id, bytes(priv), signing_key.encode())
+        except Exception as e:
+            print(f"[WARN] Falha ao persistir chave de assinatura: {e}")
+
         pub = bytes(priv.public_key)
-        return priv, pub
+        return priv, pub, signing_key
 
     async def publish_key(self):
+        signing_pub_b64 = b64(self.signing_key.verify_key.encode())
+        proof_payload = f"{self.client_id}:{b64(self.pub)}:{signing_pub_b64}".encode()
+        signature_b64 = b64(self.signing_key.sign(proof_payload).signature)
         return await self.client.send_recv(
             {
                 "type": "publish_key",
                 "client_id": self.client_id,
                 "pubkey": b64(self.pub),
+                "signing_pubkey": signing_pub_b64,
+                "proof": signature_b64,
             }
         )
 
@@ -349,6 +366,16 @@ class ChatLogic:
         self.save_state()  # Salvar após criar grupo
         if self.on_update_ui:
             self.on_update_ui()
+
+    async def remove_group_member(self, group_id: str, member_id: str):
+        return await self.client.send_recv(
+            {
+                "type": "remove_group_member",
+                "group_id": group_id,
+                "member_id": member_id,
+                "requester": self.client_id,
+            }
+        )
 
     async def send_private_message(self, peer, text):
         resp = await self.client.send_recv({"type": "get_key", "client_id": peer})

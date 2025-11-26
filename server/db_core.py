@@ -33,6 +33,7 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
             CREATE TABLE IF NOT EXISTS public_keys (
                 client_id TEXT PRIMARY KEY,
                 pubkey_b64 TEXT NOT NULL,
+                signing_pubkey_b64 TEXT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -62,6 +63,7 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
                 recipient_id TEXT NOT NULL,
                 sender_id TEXT NOT NULL,
                 blob_b64 TEXT NOT NULL,
+                auth_tag TEXT,
                 meta_json TEXT,
                 group_id TEXT,
                 msg_type TEXT NOT NULL DEFAULT 'private',
@@ -74,6 +76,15 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
             """
             ,
         )
+        # Migrações leves: adiciona colunas se estiverem ausentes
+        existing_public_cols = {row[1] for row in cur.execute("PRAGMA table_info(public_keys)")}
+        if "signing_pubkey_b64" not in existing_public_cols:
+            cur.execute("ALTER TABLE public_keys ADD COLUMN signing_pubkey_b64 TEXT")
+
+        existing_message_cols = {row[1] for row in cur.execute("PRAGMA table_info(messages)")}
+        if "auth_tag" not in existing_message_cols:
+            cur.execute("ALTER TABLE messages ADD COLUMN auth_tag TEXT")
+
         conn.commit()
     finally:
         conn.close()

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useRef, useState } from 'react'
 
 function ChatWindow({ conversation, clientId, onSendMessage, onOpenSidebar }) {
   const [message, setMessage] = useState('')
@@ -8,10 +8,6 @@ function ChatWindow({ conversation, clientId, onSendMessage, onOpenSidebar }) {
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
-
-  useEffect(() => {
-    scrollToBottom()
-  }, [conversation.history])
 
   const handleSubmit = (e) => {
     e.preventDefault()
@@ -110,7 +106,16 @@ function ChatWindow({ conversation, clientId, onSendMessage, onOpenSidebar }) {
       </div>
 
       {/* Input */}
-      <div className="px-4 py-4 border-t border-gray-800 bg-gray-900">
+      <div className="px-4 py-4 border-t border-gray-800 bg-gray-900 space-y-3">
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={scrollToBottom}
+            className="text-xs px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-200 hover:border-blue-500 hover:text-white transition"
+          >
+            Ir para a última mensagem
+          </button>
+        </div>
         <form onSubmit={handleSubmit} className="max-w-3xl mx-auto">
           <div className="flex items-end space-x-3">
             <div className="flex-1 relative">
