@@ -8,9 +8,7 @@ from server.email_service import EmailService, EmailServiceError, SMTPSettings
 def test_dev_mode_logs_code(tmp_path, caplog):
     log_path = tmp_path / "mfa.log"
     caplog.set_level("INFO")
-    service = EmailService(
-        settings=SMTPSettings(), env_mode="development", log_path=log_path
-    )
+    service = EmailService(settings=SMTPSettings(), env_mode="development", log_path=log_path)
 
     service.send_mfa_code("user@example.com", "123456")
 
@@ -66,9 +64,7 @@ def test_missing_configuration_raises_in_production():
 
 
 def test_build_message_requires_sender():
-    service = EmailService(
-        settings=SMTPSettings(), env_mode="development", log_path="/tmp/ignored"
-    )
+    service = EmailService(settings=SMTPSettings(), env_mode="development", log_path="/tmp/ignored")
     with pytest.raises(EmailServiceError):
         service._build_message("dest@example.com", "000111")
 

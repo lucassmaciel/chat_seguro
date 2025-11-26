@@ -11,15 +11,11 @@ def test_init_db_creates_schema_and_wal(tmp_path):
     with db_core.get_conn(db_path) as conn:
         names = {
             row["name"]
-            for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
         journal_mode = conn.execute("PRAGMA journal_mode;").fetchone()[0].lower()
 
-    assert {"users", "public_keys", "groups", "group_members", "messages"}.issubset(
-        names
-    )
+    assert {"users", "public_keys", "groups", "group_members", "messages"}.issubset(names)
     assert journal_mode == "wal"
 
 

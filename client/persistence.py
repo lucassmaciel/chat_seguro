@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict
 
 
 def _get_db_path(client_id: str) -> Path:
