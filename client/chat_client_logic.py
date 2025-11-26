@@ -404,6 +404,15 @@ class ChatLogic:
             }
         )
 
+    async def leave_group(self, group_id: str):
+        return await self.client.send_recv(
+            {
+                "type": "leave_group",
+                "group_id": group_id,
+                "member_id": self.client_id,
+            }
+        )
+
     async def send_private_message(self, peer, text):
         resp = await self.client.send_recv({"type": "get_key", "client_id": peer})
         if resp.get("status") != "ok":

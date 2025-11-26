@@ -1,14 +1,16 @@
 import React, { useRef, useState } from 'react'
 
-function ChatWindow({ conversation, clientId, onSendMessage, onOpenSidebar, onRemoveGroupMember }) {
+function ChatWindow({ conversation, clientId, onSendMessage, onOpenSidebar, onRemoveGroupMember, onLeaveGroup }) {
   const [message, setMessage] = useState('')
   const [isManagingGroup, setIsManagingGroup] = useState(false)
   const [memberToRemove, setMemberToRemove] = useState('')
   const [manageFeedback, setManageFeedback] = useState('')
+  const [leaveFeedback, setLeaveFeedback] = useState('')
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
 
   const canManageGroup = conversation.type === 'group' && conversation.is_admin
+  const isSoloMember = conversation.type === 'group' && (conversation.members?.length ?? 0) <= 1
 
   const handleSubmit = (e) => {
     e.preventDefault()
@@ -43,6 +45,15 @@ function ChatWindow({ conversation, clientId, onSendMessage, onOpenSidebar, onRe
     }
   }
 
+  const handleLeaveGroup = async () => {
+    if (!conversation || conversation.type !== 'group') return
+    setLeaveFeedback('')
+    const result = await onLeaveGroup(conversation.id)
+    if (!result?.success) {
+      setLeaveFeedback(result?.error || 'Não foi possível sair do grupo')
+    }
+  }
+
   return (
     <div className="flex flex-1 flex-col h-full bg-gray-900 overflow-hidden">
       {/* Header */}
@@ -65,6 +76,14 @@ function ChatWindow({ conversation, clientId, onSendMessage, onOpenSidebar, onRe
         <div className="flex items-center space-x-2">
           {canManageGroup && (
             <button
+              onClick={handleLeaveGroup}
+              className="px-3 py-2 text-xs font-semibold text-gray-200 bg-red-600/80 border border-red-500/80 rounded-lg hover:bg-red-600"
+            >
+              {isSoloMember ? 'Apagar grupo' : 'Sair do grupo'}
+            </button>
+          )}
+          {canManageGroup && (
+            <button
               onClick={() => setIsManagingGroup((prev) => !prev)}
               className="px-3 py-2 text-xs font-semibold text-gray-200 bg-purple-600/80 border border-purple-500/80 rounded-lg hover:bg-purple-600"
             >
@@ -75,6 +94,11 @@ function ChatWindow({ conversation, clientId, onSendMessage, onOpenSidebar, onRe
       </div>
 
       {/* Messages */}
+      {leaveFeedback && (
+        <div className="px-4 py-2 bg-red-900/30 text-red-200 text-xs text-center border-b border-red-700/30">
+          {leaveFeedback}
+        </div>
+      )}
       <div className="flex-1 overflow-y-auto px-4 py-6 bg-gray-900">
         {conversation.history.length === 0 ? (
           <div className="flex items-center justify-center h-full">
