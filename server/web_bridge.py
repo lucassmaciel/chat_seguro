@@ -437,6 +437,7 @@ async def get_conversations(request: Request):
             {
                 "id": conv_id,
                 "type": conv_data.get("type", "private"),
+                "is_admin": bool(conv_data.get("is_admin", False)),
                 "history": [
                     {"timestamp": ts, "sender": sender, "message": msg}
                     for ts, sender, msg in conv_data.get("history", [])
@@ -444,12 +445,18 @@ async def get_conversations(request: Request):
             }
         )
 
+    notices = []
+    if hasattr(logic, "system_notices"):
+        notices = list(logic.system_notices)
+        logic.system_notices.clear()
+
     return JSONResponse(
         {
             "status": "ok",
             "conversations": conversations,
             "available_clients": clients,
             "available_groups": groups,
+            "notices": notices,
         }
     )
 

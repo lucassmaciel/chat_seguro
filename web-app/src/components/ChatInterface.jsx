@@ -92,7 +92,19 @@ function ChatInterface({ clientId, sessionToken, onLogout }) {
         const newConversations = data.conversations || []
         setConversations(newConversations)
         setAvailableClients(data.available_clients || [])
-        setAvailableGroups(data.available_groups || [])
+        const normalizedGroups = (data.available_groups || [])
+          .map(group => {
+            if (typeof group === 'string') return group
+            return group?.id || group?.group_id
+          })
+          .filter(Boolean)
+        setAvailableGroups(normalizedGroups)
+
+        if (Array.isArray(data.notices)) {
+          data.notices.forEach(notice => {
+            alert(notice)
+          })
+        }
 
         // Só selecionar automaticamente a primeira conversa no primeiro carregamento
         setSelectedConversation(prevSelected => {
@@ -108,7 +120,7 @@ function ChatInterface({ clientId, sessionToken, onLogout }) {
             return prevSelected
           }
           // Se a conversa selecionada não existe mais, manter null (usuário escolhe manualmente)
-          return prevSelected
+          return null
         })
       } else if (data.detail) {
         setSyncError(data.detail)
