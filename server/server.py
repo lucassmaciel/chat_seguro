@@ -117,6 +117,20 @@ def persist_group(group_id: str, members: list[str], admin: str) -> None:
         )
 
 
+def update_group_admin(group_id: str, admin: str) -> None:
+    with get_conn(DB_PATH) as conn:
+        conn.execute(
+            "UPDATE groups SET admin = ? WHERE group_id = ?",
+            (admin, group_id),
+        )
+
+
+def delete_group(group_id: str) -> None:
+    with get_conn(DB_PATH) as conn:
+        conn.execute("DELETE FROM group_members WHERE group_id = ?", (group_id,))
+        conn.execute("DELETE FROM groups WHERE group_id = ?", (group_id,))
+
+
 def remove_group_member(group_id: str, member: str, requester: str) -> bool:
     group = GROUPS.get(group_id)
     if not group:
@@ -134,6 +148,40 @@ def remove_group_member(group_id: str, member: str, requester: str) -> bool:
             (group_id, member),
         )
     return True
+
+
+def leave_group(group_id: str, member: str) -> dict[str, str | bool]:
+    group = GROUPS.get(group_id)
+    if not group:
+        raise ValueError("grupo não encontrado")
+    if member not in group["members"]:
+        return {"removed": False, "deleted": False}
+
+    group["members"].remove(member)
+
+    with get_conn(DB_PATH) as conn:
+        conn.execute(
+            "DELETE FROM group_members WHERE group_id = ? AND client_id = ?",
+            (group_id, member),
+        )
+
+    deleted = False
+    promoted_admin: str | None = None
+    if not group["members"]:
+        deleted = True
+        delete_group(group_id)
+        GROUPS.pop(group_id, None)
+    else:
+        if group.get("admin") == member:
+            promoted_admin = group["members"][0]
+            group["admin"] = promoted_admin
+            update_group_admin(group_id, promoted_admin)
+
+    return {
+        "removed": True,
+        "deleted": deleted,
+        "promoted_admin": promoted_admin or "",
+    }
 
 
 def _protect_blob(blob: str) -> tuple[str, str]:
@@ -513,6 +561,12 @@ async def handle_reader(reader, writer):
                         writer, "create_group requer group_id, members e admin"
                     )
                     continue
+                if group_id in PUBLIC_KEYS:
+                    await send_error(
+                        writer,
+                        "já existe um usuário com este identificador; escolha outro nome",
+                    )
+                    continue
                 if group_id in GROUPS:
                     await send_error(writer, "grupo já existe")
                     continue
@@ -597,8 +651,59 @@ async def handle_reader(reader, writer):
                 except ValueError as exc:
                     await send_error(writer, str(exc))
                     continue
+                if removed:
+                    persist_message(
+                        recipient_id=member,
+                        sender_id="Sistema",
+                        blob=f"Você foi removido do grupo '{group_id}'.",
+                        meta={
+                            "type": "group_removal",
+                            "group_id": group_id,
+                            "admin": requester,
+                        },
+                        msg_type="private",
+                    )
+                remaining_members = GROUPS.get(group_id, {}).get("members", [])
                 await send_ok(
-                    writer, {"message": "member processed", "removed": removed}
+                    writer,
+                    {
+                        "message": "member processed",
+                        "removed": removed,
+                        "members": list(remaining_members),
+                    },
+                )
+
+            elif mtype == "leave_group":
+                group_id = msg.get("group_id")
+                member = msg.get("member_id")
+                if not group_id or not member:
+                    await send_error(writer, "leave_group requer group_id e member_id")
+                    continue
+                try:
+                    result = leave_group(group_id, member)
+                except ValueError as exc:
+                    await send_error(writer, str(exc))
+                    continue
+
+                remaining_members = GROUPS.get(group_id, {}).get("members", [])
+
+                if result.get("removed") and not result.get("deleted"):
+                    promoted = result.get("promoted_admin")
+                    if promoted:
+                        persist_message(
+                            recipient_id=promoted,
+                            sender_id="Sistema",
+                            blob=f"Você agora é administrador do grupo '{group_id}'.",
+                            meta={
+                                "type": "admin_promotion",
+                                "group_id": group_id,
+                            },
+                            msg_type="private",
+                        )
+
+                await send_ok(
+                    writer,
+                    {"message": "left", "members": list(remaining_members), **result},
                 )
 
             elif mtype == "fetch_blobs":
@@ -634,7 +739,15 @@ async def handle_reader(reader, writer):
             elif mtype == "list_all":
                 requester = msg.get("client_id")
                 clients = [c for c in PUBLIC_KEYS if c != requester]
-                groups = list(GROUPS.keys())
+                groups = [
+                    {
+                        "id": group_id,
+                        "admin": group.get("admin"),
+                        "members": group.get("members", []),
+                    }
+                    for group_id, group in GROUPS.items()
+                    if requester in group.get("members", [])
+                ]
                 await send_ok(writer, {"clients": clients, "groups": groups})
 
             elif mtype == "disconnect":

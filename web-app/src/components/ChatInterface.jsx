@@ -92,7 +92,19 @@ function ChatInterface({ clientId, sessionToken, onLogout }) {
         const newConversations = data.conversations || []
         setConversations(newConversations)
         setAvailableClients(data.available_clients || [])
-        setAvailableGroups(data.available_groups || [])
+        const normalizedGroups = (data.available_groups || [])
+          .map(group => {
+            if (typeof group === 'string') return group
+            return group?.id || group?.group_id
+          })
+          .filter(Boolean)
+        setAvailableGroups(normalizedGroups)
+
+        if (Array.isArray(data.notices)) {
+          data.notices.forEach(notice => {
+            alert(notice)
+          })
+        }
 
         // Só selecionar automaticamente a primeira conversa no primeiro carregamento
         setSelectedConversation(prevSelected => {
@@ -108,7 +120,7 @@ function ChatInterface({ clientId, sessionToken, onLogout }) {
             return prevSelected
           }
           // Se a conversa selecionada não existe mais, manter null (usuário escolhe manualmente)
-          return prevSelected
+          return null
         })
       } else if (data.detail) {
         setSyncError(data.detail)
@@ -173,6 +185,40 @@ function ChatInterface({ clientId, sessionToken, onLogout }) {
     } catch (error) {
       console.error('Erro ao remover membro:', error)
       return { success: false, error: 'Erro de conexão ao remover membro' }
+    }
+  }
+
+  const handleLeaveGroup = async (groupId) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/leave-group`, {
+        method: 'POST',
+        headers: buildAuthHeaders({
+          'Content-Type': 'application/json',
+        }),
+        body: JSON.stringify({
+          group_id: groupId,
+        }),
+      })
+
+      const data = await response.json()
+      if (response.ok && data.status === 'ok') {
+        const deleted = Boolean(data.result?.deleted)
+        setSelectedConversation((prev) => {
+          if (!prev || prev !== groupId) return prev
+          return null
+        })
+        setTimeout(loadConversations, 200)
+        if (deleted) {
+          alert('Grupo apagado, pois você era o único membro.')
+        }
+        return { success: true }
+      }
+
+      const detail = data.detail || data.reason || 'Erro desconhecido'
+      return { success: false, error: detail }
+    } catch (error) {
+      console.error('Erro ao sair do grupo:', error)
+      return { success: false, error: 'Erro de conexão ao sair do grupo' }
     }
   }
 
@@ -338,6 +384,7 @@ function ChatInterface({ clientId, sessionToken, onLogout }) {
               onSendMessage={handleSendMessage}
               onOpenSidebar={handleOpenSidebar}
               onRemoveGroupMember={handleRemoveGroupMember}
+              onLeaveGroup={handleLeaveGroup}
             />
           ) : (
             <div className="flex-1 flex items-center justify-center bg-gray-900">

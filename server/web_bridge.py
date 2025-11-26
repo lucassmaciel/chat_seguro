@@ -144,6 +144,10 @@ class RemoveGroupRequest(BaseModel):
     member_id: str
 
 
+class LeaveGroupRequest(BaseModel):
+    group_id: str
+
+
 def notify_websockets(client_id: str, event_type: str, data: dict):
     """Notifica todos os WebSockets conectados de um cliente"""
     if client_id in websocket_connections:
@@ -437,6 +441,8 @@ async def get_conversations(request: Request):
             {
                 "id": conv_id,
                 "type": conv_data.get("type", "private"),
+                "is_admin": bool(conv_data.get("is_admin", False)),
+                "members": conv_data.get("members", []),
                 "history": [
                     {"timestamp": ts, "sender": sender, "message": msg}
                     for ts, sender, msg in conv_data.get("history", [])
@@ -444,12 +450,18 @@ async def get_conversations(request: Request):
             }
         )
 
+    notices = []
+    if hasattr(logic, "system_notices"):
+        notices = list(logic.system_notices)
+        logic.system_notices.clear()
+
     return JSONResponse(
         {
             "status": "ok",
             "conversations": conversations,
             "available_clients": clients,
             "available_groups": groups,
+            "notices": notices,
         }
     )
 
@@ -540,8 +552,30 @@ async def remove_group_member(payload: RemoveGroupRequest, request: Request):
         reason = response.get("reason") or "falha ao remover membro"
         raise HTTPException(status_code=400, detail=reason)
 
-    notify_websockets(client_id, "update_ui", {})
+    affected_members = set(response.get("members", [])) | {client_id}
+    for member in affected_members:
+        notify_websockets(member, "update_ui", {})
     return JSONResponse({"status": "ok", "removed": True})
+
+
+@app.post("/api/leave-group")
+async def leave_group(payload: LeaveGroupRequest, request: Request):
+    """Permite que um membro saia do grupo, promovendo outro admin se necessário."""
+    _, client_id = _require_session(request)
+
+    if client_id not in active_sessions:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+
+    logic = active_sessions[client_id]
+    response = await logic.leave_group(payload.group_id)
+    if response.get("status") != "ok" or not response.get("removed", False):
+        reason = response.get("reason") or "falha ao sair do grupo"
+        raise HTTPException(status_code=400, detail=reason)
+
+    affected_members = set(response.get("members", [])) | {client_id}
+    for member in affected_members:
+        notify_websockets(member, "update_ui", {})
+    return JSONResponse({"status": "ok", "result": response})
 
 
 @app.websocket("/ws/{client_id}")
