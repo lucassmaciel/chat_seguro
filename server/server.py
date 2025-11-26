@@ -513,6 +513,12 @@ async def handle_reader(reader, writer):
                         writer, "create_group requer group_id, members e admin"
                     )
                     continue
+                if group_id in PUBLIC_KEYS:
+                    await send_error(
+                        writer,
+                        "já existe um usuário com este identificador; escolha outro nome",
+                    )
+                    continue
                 if group_id in GROUPS:
                     await send_error(writer, "grupo já existe")
                     continue
@@ -597,6 +603,18 @@ async def handle_reader(reader, writer):
                 except ValueError as exc:
                     await send_error(writer, str(exc))
                     continue
+                if removed:
+                    persist_message(
+                        recipient_id=member,
+                        sender_id="Sistema",
+                        blob=f"Você foi removido do grupo '{group_id}'.",
+                        meta={
+                            "type": "group_removal",
+                            "group_id": group_id,
+                            "admin": requester,
+                        },
+                        msg_type="private",
+                    )
                 await send_ok(
                     writer, {"message": "member processed", "removed": removed}
                 )
@@ -634,7 +652,15 @@ async def handle_reader(reader, writer):
             elif mtype == "list_all":
                 requester = msg.get("client_id")
                 clients = [c for c in PUBLIC_KEYS if c != requester]
-                groups = list(GROUPS.keys())
+                groups = [
+                    {
+                        "id": group_id,
+                        "admin": group.get("admin"),
+                        "members": group.get("members", []),
+                    }
+                    for group_id, group in GROUPS.items()
+                    if requester in group.get("members", [])
+                ]
                 await send_ok(writer, {"clients": clients, "groups": groups})
 
             elif mtype == "disconnect":

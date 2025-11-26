@@ -215,6 +215,7 @@ class ChatLogic:
         self.conversations = load_conversations(client_id)
         self.on_new_message = None
         self.on_update_ui = None
+        self.system_notices: list[str] = []
 
     def save_state(self):
         """Salva o estado atual das conversas"""
@@ -294,19 +295,44 @@ class ChatLogic:
         )
         if resp.get("status") == "ok":
             clients = resp.get("clients", [])
-            groups = resp.get("groups", [])
+            groups_raw = resp.get("groups", [])
 
             for client in clients:
                 if client not in self.conversations:
                     self.conversations[client] = {"history": [], "type": "private"}
-            for group in groups:
-                if group not in self.conversations:
-                    self.conversations[group] = {
-                        "key": None,
-                        "history": [],
-                        "type": "group",
-                    }
-            return clients, groups
+
+            current_groups: set[str] = set()
+            for group in groups_raw:
+                if isinstance(group, dict):
+                    group_id = group.get("id") or group.get("group_id")
+                    admin = group.get("admin")
+                    members = group.get("members")
+                else:
+                    group_id = group
+                    admin = None
+                    members = None
+                if not group_id:
+                    continue
+
+                current_groups.add(group_id)
+                conv = self.conversations.setdefault(
+                    group_id,
+                    {"key": None, "history": [], "type": "group"},
+                )
+                conv["type"] = "group"
+                conv["is_admin"] = admin == self.client_id if admin else False
+                if members is not None:
+                    conv["members"] = members
+
+            stale_groups = [
+                gid
+                for gid, conv in self.conversations.items()
+                if conv.get("type") == "group" and gid not in current_groups
+            ]
+            for gid in stale_groups:
+                del self.conversations[gid]
+
+            return clients, list(current_groups)
         return [], []
 
     async def create_group(self, group_id, members):
@@ -317,6 +343,7 @@ class ChatLogic:
             "key": group_key,
             "history": [],
             "type": "group",
+            "is_admin": True,
         }
 
         await self.client.send_recv(
@@ -429,6 +456,21 @@ class ChatLogic:
                 if response.get("status") == "ok":
                     for m in response.get("messages", []):
                         ts = time.strftime("%H:%M:%S")
+
+                        meta = m.get("meta") or {}
+                        if meta.get("type") == "group_removal":
+                            group_id = meta.get("group_id")
+                            notice = meta.get(
+                                "message",
+                                f"Você foi removido do grupo '{group_id}'.",
+                            )
+                            if group_id and group_id in self.conversations:
+                                del self.conversations[group_id]
+                                self.save_state()
+                            self.system_notices.append(notice)
+                            if self.on_update_ui:
+                                self.on_update_ui()
+                            continue
 
                         # 1) Mensagens de grupo (blob binário SecretBox)
                         if m.get("type") == "group":

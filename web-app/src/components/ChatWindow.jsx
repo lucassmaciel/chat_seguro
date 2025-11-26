@@ -8,6 +8,8 @@ function ChatWindow({ conversation, clientId, onSendMessage, onOpenSidebar, onRe
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
 
+  const canManageGroup = conversation.type === 'group' && conversation.is_admin
+
   const handleSubmit = (e) => {
     e.preventDefault()
     if (message.trim()) {
@@ -61,7 +63,7 @@ function ChatWindow({ conversation, clientId, onSendMessage, onOpenSidebar, onRe
           </div>
         </div>
         <div className="flex items-center space-x-2">
-          {conversation.type === 'group' && (
+          {canManageGroup && (
             <button
               onClick={() => setIsManagingGroup((prev) => !prev)}
               className="px-3 py-2 text-xs font-semibold text-gray-200 bg-purple-600/80 border border-purple-500/80 rounded-lg hover:bg-purple-600"
@@ -69,12 +71,6 @@ function ChatWindow({ conversation, clientId, onSendMessage, onOpenSidebar, onRe
               Gerenciar
             </button>
           )}
-          <button
-            onClick={onOpenSidebar}
-            className="lg:hidden px-3 py-2 text-xs font-semibold text-gray-200 bg-gray-800 border border-gray-700 rounded-lg"
-          >
-            Conversas
-          </button>
         </div>
       </div>
 
@@ -130,7 +126,7 @@ function ChatWindow({ conversation, clientId, onSendMessage, onOpenSidebar, onRe
         )}
       </div>
 
-      {conversation.type === 'group' && isManagingGroup && (
+      {canManageGroup && isManagingGroup && (
         <div className="px-4 pb-4 space-y-2 border-t border-gray-800 bg-gray-900/90">
           <div className="max-w-3xl mx-auto bg-gray-800 border border-gray-700 rounded-2xl p-4">
             <div className="flex items-center justify-between mb-3">
