@@ -1,2 +1,7 @@
 *.pem
+__pycache__
+*.json
 .idea
+*.db
+*.log
+*.env

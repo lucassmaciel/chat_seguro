@@ -1,3 +1,19 @@
+Metadata-Version: 2.4
+Name: chat-seguran-a
+Version: 0.1.0
+Summary: Add your description here
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+Requires-Dist: cryptography>=41.0.0
+Requires-Dist: pynacl>=1.6.0
+Requires-Dist: websockets>=11.0.0
+Requires-Dist: fastapi>=0.104.0
+Requires-Dist: uvicorn[standard]>=0.24.0
+Requires-Dist: email-validator>=2.0.0
+Requires-Dist: python-dotenv>=1.0.0
+Requires-Dist: starlette>=0.49.3
+Requires-Dist: pytest>=9.0.1
+
 # Chat Seguro - Guia Completo
 
 Sistema de chat seguro com criptografia end-to-end usando ECDH (X25519) + Salsa20+Poly1305. Este guia cobre **apenas uso local** (dev server, bridge e frontend) e **não prepara para deployment**. O fluxo de MFA permanece igual e obrigatório.

@@ -1,0 +1,422 @@
+import React, { useState, useEffect, useRef } from 'react'
+import ConversationList from './ConversationList'
+import ChatWindow from './ChatWindow'
+import CreateGroupModal from './CreateGroupModal'
+import { API_BASE_URL, WS_BASE_URL } from '../config'
+
+function ChatInterface({ clientId, sessionToken, onLogout }) {
+  const [conversations, setConversations] = useState([])
+  const [availableClients, setAvailableClients] = useState([])
+  const [availableGroups, setAvailableGroups] = useState([])
+  const [selectedConversation, setSelectedConversation] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [showCreateGroup, setShowCreateGroup] = useState(false)
+  const [syncError, setSyncError] = useState('')
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+  const isInitialLoadRef = useRef(true)
+  const wsRef = useRef(null)
+
+  const buildAuthHeaders = (extra = {}) => {
+    const headers = { ...extra }
+    if (sessionToken) {
+      headers['X-Session-Token'] = sessionToken
+    }
+    return headers
+  }
+
+  useEffect(() => {
+    // Resetar estado quando clientId mudar
+    isInitialLoadRef.current = true
+    setSelectedConversation(null)
+    setIsSidebarOpen(false)
+    setLoading(true)
+    setSyncError('')
+
+    let reconnect = true
+    let reconnectTimeout
+
+    const connectWebSocket = () => {
+      const ws = new WebSocket(`${WS_BASE_URL}/ws/${clientId}`)
+      wsRef.current = ws
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data)
+        if (['new_message', 'update_ui', 'message_sent'].includes(data.type)) {
+          loadConversations()
+        }
+      }
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error)
+      }
+
+      ws.onclose = () => {
+        if (reconnect) {
+          reconnectTimeout = setTimeout(connectWebSocket, 3000)
+        }
+      }
+    }
+
+    const interval = setInterval(loadConversations, 3000)
+    loadConversations()
+    connectWebSocket()
+
+    return () => {
+      reconnect = false
+      clearInterval(interval)
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout)
+      }
+      if (wsRef.current) {
+        wsRef.current.close()
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId])
+
+  const loadConversations = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/conversations`, {
+        headers: buildAuthHeaders(),
+      })
+      const data = await response.json()
+
+      if (response.status === 401) {
+        setSyncError('Sessão expirada. Faça login novamente para continuar.')
+        onLogout()
+        return
+      }
+
+      if (data.status === 'ok') {
+        setSyncError('')
+        const newConversations = data.conversations || []
+        setConversations(newConversations)
+        setAvailableClients(data.available_clients || [])
+        const normalizedGroups = (data.available_groups || [])
+          .map(group => {
+            if (typeof group === 'string') return group
+            return group?.id || group?.group_id
+          })
+          .filter(Boolean)
+        setAvailableGroups(normalizedGroups)
+
+        if (Array.isArray(data.notices)) {
+          data.notices.forEach(notice => {
+            alert(notice)
+          })
+        }
+
+        // Só selecionar automaticamente a primeira conversa no primeiro carregamento
+        setSelectedConversation(prevSelected => {
+          if (isInitialLoadRef.current && !prevSelected && newConversations.length > 0) {
+            isInitialLoadRef.current = false
+            return newConversations[0].id
+          }
+          if (isInitialLoadRef.current) {
+            isInitialLoadRef.current = false
+          }
+          // Preservar a seleção atual se a conversa ainda existir
+          if (prevSelected && newConversations.find(c => c.id === prevSelected)) {
+            return prevSelected
+          }
+          // Se a conversa selecionada não existe mais, manter null (usuário escolhe manualmente)
+          return null
+        })
+      } else if (data.detail) {
+        setSyncError(data.detail)
+      }
+    } catch (error) {
+      console.error('Erro ao carregar conversas:', error)
+      setSyncError('Erro ao sincronizar dados. Verifique sua conexão.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleSendMessage = async (message) => {
+    if (!selectedConversation || !message.trim()) return
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/send-message`, {
+        method: 'POST',
+        headers: buildAuthHeaders({
+          'Content-Type': 'application/json',
+        }),
+        body: JSON.stringify({
+          to: selectedConversation,
+          message: message.trim(),
+        }),
+      })
+
+      const data = await response.json()
+      if (data.status === 'ok') {
+        // Recarregar imediatamente para mostrar a mensagem
+        setTimeout(loadConversations, 100)
+      } else {
+        alert('Erro ao enviar mensagem: ' + (data.detail || 'Erro desconhecido'))
+      }
+    } catch (error) {
+      console.error('Erro ao enviar mensagem:', error)
+      alert('Erro de conexão ao enviar mensagem')
+    }
+  }
+
+  const handleRemoveGroupMember = async (groupId, memberId) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/remove-group-member`, {
+        method: 'POST',
+        headers: buildAuthHeaders({
+          'Content-Type': 'application/json',
+        }),
+        body: JSON.stringify({
+          group_id: groupId,
+          member_id: memberId,
+        }),
+      })
+
+      const data = await response.json()
+      if (response.ok && data.status === 'ok') {
+        setTimeout(loadConversations, 300)
+        return { success: true }
+      }
+
+      const detail = data.detail || data.reason || 'Erro desconhecido'
+      return { success: false, error: detail }
+    } catch (error) {
+      console.error('Erro ao remover membro:', error)
+      return { success: false, error: 'Erro de conexão ao remover membro' }
+    }
+  }
+
+  const handleLeaveGroup = async (groupId) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/leave-group`, {
+        method: 'POST',
+        headers: buildAuthHeaders({
+          'Content-Type': 'application/json',
+        }),
+        body: JSON.stringify({
+          group_id: groupId,
+        }),
+      })
+
+      const data = await response.json()
+      if (response.ok && data.status === 'ok') {
+        const deleted = Boolean(data.result?.deleted)
+        setSelectedConversation((prev) => {
+          if (!prev || prev !== groupId) return prev
+          return null
+        })
+        setTimeout(loadConversations, 200)
+        if (deleted) {
+          alert('Grupo apagado, pois você era o único membro.')
+        }
+        return { success: true }
+      }
+
+      const detail = data.detail || data.reason || 'Erro desconhecido'
+      return { success: false, error: detail }
+    } catch (error) {
+      console.error('Erro ao sair do grupo:', error)
+      return { success: false, error: 'Erro de conexão ao sair do grupo' }
+    }
+  }
+
+  const handleCreateGroup = async (groupName, members) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/create-group`, {
+        method: 'POST',
+        headers: buildAuthHeaders({
+          'Content-Type': 'application/json',
+        }),
+        body: JSON.stringify({
+          group_id: groupName,
+          members: members,
+        }),
+      })
+
+      const data = await response.json()
+      if (data.status === 'ok') {
+        setShowCreateGroup(false)
+        setTimeout(loadConversations, 500)
+      } else {
+        alert('Erro ao criar grupo: ' + (data.detail || 'Erro desconhecido'))
+      }
+    } catch (error) {
+      console.error('Erro ao criar grupo:', error)
+      alert('Erro de conexão ao criar grupo')
+    }
+  }
+
+  const handleLogout = async () => {
+    try {
+      const headers = sessionToken
+        ? {
+            'X-Session-Token': sessionToken,
+          }
+        : undefined
+      await fetch(`${API_BASE_URL}/api/logout`, {
+        method: 'POST',
+        headers,
+      })
+    } catch (error) {
+      console.error('Erro no logout:', error)
+    }
+    onLogout()
+  }
+
+  const currentConversation = conversations.find(
+    (c) => c.id === selectedConversation
+  )
+
+  const handleSelectConversation = (conversationId) => {
+    setSelectedConversation(conversationId)
+    setIsSidebarOpen(false)
+  }
+
+  const handleOpenSidebar = () => setIsSidebarOpen(true)
+  const handleCloseSidebar = () => setIsSidebarOpen(false)
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-900">
+        <div className="text-center">
+          <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent"></div>
+          <p className="mt-4 text-gray-400">Carregando...</p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen w-full bg-gray-900 flex flex-col">
+      <div className="lg:hidden border-b border-gray-800 bg-gray-900/80 px-4 py-3 flex items-center justify-between">
+        <div className="flex items-center space-x-3">
+          <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white font-semibold">
+            {clientId[0]?.toUpperCase()}
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-white">{clientId}</p>
+            <p className="text-xs text-gray-400 flex items-center">
+              <span className="w-2 h-2 bg-green-500 rounded-full mr-1 animate-pulse"></span>
+              Online
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={handleOpenSidebar}
+            className="px-3 py-2 rounded-lg bg-gray-800 text-gray-200 text-xs font-medium border border-gray-700"
+          >
+            Conversas
+          </button>
+          <button
+            onClick={handleLogout}
+            className="p-2 rounded-lg hover:bg-gray-800 transition-colors text-gray-400 hover:text-white"
+            title="Sair"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
+        {/* Sidebar */}
+        {isSidebarOpen && (
+          <button
+            aria-label="Fechar lista de conversas"
+            className="fixed inset-0 bg-black/60 z-20 lg:hidden"
+            onClick={handleCloseSidebar}
+          ></button>
+        )}
+        <div
+          className={`fixed inset-y-0 left-0 z-30 w-full max-w-xs bg-gray-800 border-r border-gray-700 flex flex-col shadow-2xl transform transition-transform duration-300 lg:static lg:translate-x-0 lg:max-w-none lg:w-80 lg:shadow-lg ${
+            isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
+          }`}
+        >
+          <div className="hidden lg:block p-4 border-b border-gray-700 bg-gray-800/80 backdrop-blur-xl">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white font-semibold shadow-lg shadow-blue-500/50">
+                  {clientId[0]?.toUpperCase()}
+                </div>
+                <div>
+                  <div className="font-semibold text-white text-sm">{clientId}</div>
+                  <div className="text-xs text-gray-400 flex items-center">
+                    <span className="w-2 h-2 bg-green-500 rounded-full mr-1.5 animate-pulse"></span>
+                    Online
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={handleLogout}
+                className="p-2 rounded-lg hover:bg-gray-700 transition-colors text-gray-400 hover:text-white"
+                title="Sair"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <ConversationList
+            conversations={conversations}
+            selectedId={selectedConversation}
+            onSelect={handleSelectConversation}
+            onCreateGroup={() => setShowCreateGroup(true)}
+          />
+        </div>
+
+        {/* Main Chat Area */}
+        <div className="flex-1 flex flex-col bg-gray-900 min-h-0">
+          {syncError && (
+            <div className="px-6 py-3 bg-red-900/40 text-red-200 text-sm text-center border-b border-red-700/40">
+              {syncError}
+            </div>
+          )}
+          {currentConversation ? (
+            <ChatWindow
+              conversation={currentConversation}
+              clientId={clientId}
+              onSendMessage={handleSendMessage}
+              onOpenSidebar={handleOpenSidebar}
+              onRemoveGroupMember={handleRemoveGroupMember}
+              onLeaveGroup={handleLeaveGroup}
+            />
+          ) : (
+            <div className="flex-1 flex items-center justify-center bg-gray-900">
+              <div className="text-center">
+                <div className="w-16 h-16 rounded-full bg-gray-800 flex items-center justify-center mx-auto mb-4">
+                  <svg className="w-8 h-8 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  </svg>
+                </div>
+                <h2 className="text-xl font-semibold text-gray-300 mb-2">Selecione uma conversa</h2>
+                <p className="text-gray-500 text-sm">Escolha uma conversa da lista para começar</p>
+                <button
+                  onClick={handleOpenSidebar}
+                  className="mt-4 inline-flex items-center justify-center px-4 py-2 rounded-xl bg-gray-800 text-sm font-semibold text-gray-200 border border-gray-700 lg:hidden"
+                >
+                  Ver conversas
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {showCreateGroup && (
+        <CreateGroupModal
+          availableClients={availableClients.filter((c) => c !== clientId)}
+          onCreate={handleCreateGroup}
+          onClose={() => setShowCreateGroup(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+export default ChatInterface
